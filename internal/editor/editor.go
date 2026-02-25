@@ -2,10 +2,11 @@ package editor
 
 // Represents a single line in the text editor
 type Line struct {
-	Raw      string // Raw string data
-	Rendered string // Either syntax highlighted or kitty graphics
-	IsMath   bool   // Indicate whether the line is math or not
-	IsDirty  bool   // Whether to async re-render line
+	Raw         string // Raw string data
+	Rendered    string // Either syntax highlighted or kitty graphics
+	IsMath      bool   // Indicate whether the line is math or not
+	IsDirty     bool   // Whether to async re-render line
+	ImageHeight int    // Height of image in terminal cells
 }
 
 // Represents a coordinate in the text editor by way or row and column
@@ -65,6 +66,12 @@ func (m *Model) MoveCursor(rowDelta, colDelta int) {
 		m.Cursor.Col = len(m.Lines[m.Cursor.Row].Raw)
 	}
 
+	m.ensureCursorInView()
+}
+
+func (m *Model) EndOfLine() {
+	lineLen := len(m.Lines[m.Cursor.Row].Raw)
+	m.Cursor.Col = lineLen
 	m.ensureCursorInView()
 }
 
