@@ -1,0 +1,8 @@
+- [X] Implement \n for gutter and text editor
+- [X] Add padding top and bottom of math expression
+- [X] Determine the height requirement for an expression to render and insert that many new lines -> Set height via Kitty Display Protocol
+- [ ] Generalize math syntax to work for multiline expressions
+- [ ] Optimize redraws of the image
+- [ ] Implement syntax highlighting for markdown
+- [ ] Add frontmatter support
+- [ ] Implement gw

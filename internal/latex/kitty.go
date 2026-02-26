@@ -3,6 +3,9 @@ package latex
 import (
 	// "encoding/base64"
 	// "fmt"
+	// "fmt"
+	"math"
+
 	"github.com/blacktop/go-termimg"
 )
 
@@ -14,13 +17,26 @@ func EncodeImageForKitty(pngPath string) (string, int, error) {
 	if err != nil {
 		return "", 0, err
 	}
+
+	imageHeight := image.Bounds.Dy()
+
+	termFeatures := termimg.QueryTerminalFeatures()
+	characterHeight := termFeatures.FontHeight
+	if characterHeight == 0 {
+		characterHeight = 16 // Fallback
+	}
+
+	rows := int(math.Round(float64(imageHeight) / float64(characterHeight)))
+	rows = max(rows, 1)
+
 	renderedString, err := image.
 		Protocol(termimg.Kitty).
+		Height(rows).
+		Scale(termimg.ScaleFit).
 		Render()
 	if err != nil {
 		return "", 0, err
 	}
 
-	height := 1
-	return renderedString, height, nil
+	return renderedString, rows, nil
 }

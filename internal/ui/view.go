@@ -72,16 +72,17 @@ func (m Model) View() tea.View {
 			styledGutter = gutterStyle.Render(lineNumStr)
 		}
 
-		contentBuilder.WriteString(styledGutter)
-
 		line := m.Editor.Lines[actualRowIdx]
-		if actualRowIdx != m.Editor.Cursor.Row && line.IsMath && line.Rendered != "" {
+		isRenderedMath := actualRowIdx != m.Editor.Cursor.Row && line.IsMath && line.Rendered != ""
+
+		if isRenderedMath {
+			contentBuilder.WriteString("\n")
+			contentBuilder.WriteString(styledGutter)
 			h := max(line.ImageHeight, 1)
-			contentBuilder.WriteString(strings.Repeat("\n", h))
+			contentBuilder.WriteString(strings.Repeat("\n", h+1))
 		} else {
+			contentBuilder.WriteString(styledGutter)
 			contentBuilder.WriteString(lineStr)
-		}
-		if !(actualRowIdx != m.Editor.Cursor.Row && line.IsMath && line.Rendered != "") {
 			contentBuilder.WriteString("\n")
 		}
 	}
@@ -96,9 +97,21 @@ func (m Model) View() tea.View {
 
 	// Move terminal cursor to the correct position
 	// X: 3 (PaddingLeft) + gutterWidth + 2 (spaces) + (CursorCol - OffsetCol)
-	// Y: CursorRow - OffsetRow
 	cursorX := 3 + gutterWidth + 2 + (m.Editor.Cursor.Col - m.Editor.Offset.Col)
-	cursorY := (m.Editor.Cursor.Row - m.Editor.Offset.Row)
+
+	// Y must account for the actual height of each line rendered above the cursor
+	cursorY := 0
+	for i := m.Editor.Offset.Row; i < m.Editor.Cursor.Row; i++ {
+		if i >= len(m.Editor.Lines) {
+			break
+		}
+		line := m.Editor.Lines[i]
+		if line.IsMath && line.Rendered != "" {
+			cursorY += max(line.ImageHeight, 1) + 2
+		} else {
+			cursorY += 1
+		}
+	}
 
 	var cursorConfig tea.Cursor
 	if m.mode == Normal {

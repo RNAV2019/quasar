@@ -30,8 +30,11 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 		return "", fmt.Errorf("Failed to create temporary directory: %w", err)
 	}
 
-	template := `\documentclass[preview]{standalone}
+	template := `\documentclass[preview,border=2pt]{standalone}
+	\usepackage[T1]{fontenc}
+	\usepackage{lmodern}
 	\usepackage{amsmath}
+	\usepackage{amssymb}
 	\begin{document}
 	%s
 	\end{document}
@@ -50,11 +53,17 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 	}
 
 	dviPath := filepath.Join(tmpDir, hashStr+".dvi")
-	dviPngCmd := exec.Command("dvipng", "-D", "600", "-T", "tight", "-bg", "Transparent", "-fg", "White", "-o", pngPath, dviPath)
+	tmpPngPath := filepath.Join(tmpDir, hashStr+".png")
+	dviPngCmd := exec.Command("dvipng", "-Q", "9", "-D", "1200", "-T", "tight", "-bg", "Transparent", "-fg", "White", "-o", tmpPngPath, dviPath)
 	dviPngCmd.Dir = tmpDir
 
 	if err := dviPngCmd.Run(); err != nil {
 		return "", fmt.Errorf("DVIPNG error: %w", err)
+	}
+
+	magickCmd := exec.Command("magick", "convert", tmpPngPath, "-resize", "30%", pngPath)
+	if err := magickCmd.Run(); err != nil {
+		return "", fmt.Errorf("ImageMagick error: %w", err)
 	}
 
 	return pngPath, nil
