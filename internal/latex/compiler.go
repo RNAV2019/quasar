@@ -61,7 +61,7 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 		return "", fmt.Errorf("DVIPNG error: %w", err)
 	}
 
-	magickCmd := exec.Command("magick", "convert", tmpPngPath, "-resize", "30%", pngPath)
+	magickCmd := exec.Command("magick", "convert", tmpPngPath, "-antialias", "-resize", "30%", pngPath)
 	if err := magickCmd.Run(); err != nil {
 		return "", fmt.Errorf("ImageMagick error: %w", err)
 	}
