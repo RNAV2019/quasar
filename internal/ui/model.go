@@ -27,59 +27,51 @@ type Model struct {
 	Time   time.Time
 	Editor editor.Model
 	Config *config.Config
+	// For debugging LaTeX compilation
+	CompiledMath []string
 }
 
 type TickMsg time.Time
 
-type LineProcessedMsg struct {
-	Row         int
+type BlockProcessedMsg struct {
+	BlockIdx    int
 	Rendered    string
 	ImageHeight int
+	Error       error
+	Source      string // The raw latex string that was compiled
 }
 
 func redrawImages(m Model) tea.Cmd {
 	return func() tea.Msg {
 		var seq strings.Builder
-
 		// 1. Clear all existing Kitty images (Action: Delete, Delete: All)
 		seq.WriteString("\x1b_Ga=d,d=A;\x1b\\")
 
-		editorLines := m.Editor.ViewLines()
-		gutterWidth := len(fmt.Sprint(len(m.Editor.Lines)))
+		totalLines := 0
+		for _, block := range m.Editor.Blocks {
+			totalLines += len(block.Lines)
+		}
+		gutterWidth := len(fmt.Sprint(totalLines))
 
-		// Keep a running tally of physical Y-rows.
-		// If you have a top status bar, change this to 2.
-		currentY := 1
+		currentY := 1 // 1-based index for terminal rows
 
-		// 2. Loop through visible lines and explicitly draw virtual images
-		for i := range editorLines {
-			actualRowIdx := m.Editor.Offset.Row + i
-			if actualRowIdx >= len(m.Editor.Lines) {
-				break
-			}
-
-			line := m.Editor.Lines[actualRowIdx]
-
-			if actualRowIdx != m.Editor.Cursor.Row && line.IsMath && line.Rendered != "" {
-				// Calculate absolute ANSI coordinates (1-based)
-				imageX := 3 + gutterWidth + 2 + 1
+		// Loop through blocks and draw images for inactive math blocks
+		for blockIdx, block := range m.Editor.Blocks {
+			if block.Type == editor.MathBlock && block.Rendered != "" && m.Editor.Cursor.BlockIdx != blockIdx {
+				// This is an inactive, rendered math block. Draw the image.
+				imageX := 2 + gutterWidth + 3 + 1 // padding + gutter + spaces
 				imageY := currentY
 
-				// Save cursor (\033[s), move to coordinate, print image, restore cursor (\033[u)
-				seq.WriteString("\033[s")
-				fmt.Fprintf(&seq, "\033[%d;%dH", imageY, imageX)
-				seq.WriteString(line.Rendered)
-				seq.WriteString("\033[u")
-
-				// Advance Y by the image's height plus padding
-				currentY += max(line.ImageHeight, 1)
-			} else {
-				// Standard text lines take exactly 1 row
-				currentY += 1
+				seq.WriteString("\033[s")                               // Save cursor
+				fmt.Fprintf(&seq, "\033[%d;%dH", imageY, imageX) // Move to position
+				seq.WriteString(block.Rendered)                         // Print image
+				seq.WriteString("\033[u")                               // Restore cursor
 			}
+			// Always advance Y by the number of raw text lines to ensure stable layout.
+			currentY += len(block.Lines)
 		}
 
-		// 3. Write directly to stdout, bypassing Bubble Tea entirely
+		// 3. Write directly to stdout
 		os.Stdout.WriteString(seq.String())
 
 		return nil
@@ -92,29 +84,46 @@ func doTick() tea.Cmd {
 	})
 }
 
-func (m Model) processDirtyLines() tea.Cmd {
-	for rowIdx, line := range m.Editor.Lines {
-		if line.IsDirty && rowIdx != m.Editor.Cursor.Row {
-			// Check if it's math
-			isMath := latex.IsMath(line.Raw)
+func (m *Model) processDirtyBlocks() tea.Cmd {
+	for i := range m.Editor.Blocks {
+		block := &m.Editor.Blocks[i]
+		if block.IsDirty && m.Editor.Cursor.BlockIdx != i {
+			if block.Type == editor.MathBlock {
+				// This block is dirty and not active, so we process it.
+				return func() tea.Msg {
+					var rendered string
+					var height int
 
-			return func() tea.Msg {
-				var rendered string
-				var height int
-				if isMath {
-					path, err := latex.CompileToPNG(line.Raw, m.Config.CacheDir)
+					contentLines := block.Lines
+					// Strip surrounding '$$' lines if they exist
+					if len(contentLines) >= 2 && contentLines[0] == "$$" && contentLines[len(contentLines)-1] == "$$" {
+						contentLines = contentLines[1 : len(contentLines)-1]
+					}
+
+					// Aggressively trim blank lines from the start of the content.
+					start := 0
+					for start < len(contentLines) && strings.TrimSpace(contentLines[start]) == "" {
+						start++
+					}
+					content := strings.Join(contentLines[start:], "\n")
+
+					path, err := latex.CompileToPNG(content, m.Config.CacheDir)
 					if err == nil {
-						rendered, height, err = latex.EncodeImageForKitty(path)
-						if err != nil {
-							fmt.Printf("kitty encoded err: %v\n", err)
-						}
+						// Force the image height to be the same as the raw text line count
+						targetHeight := len(block.Lines)
+						rendered, height, _ = latex.EncodeImageForKitty(path, targetHeight)
+					}
+					return BlockProcessedMsg{
+						BlockIdx:    i,
+						Rendered:    rendered,
+						ImageHeight: height,
+						Error:       err,
+						Source:      content, // Add the source for debugging
 					}
 				}
-				return LineProcessedMsg{
-					Row:         rowIdx,
-					Rendered:    rendered,
-					ImageHeight: height,
-				}
+			} else if block.Type == editor.TextBlock {
+				// For text blocks, we just mark them as not dirty.
+				block.IsDirty = false
 			}
 		}
 	}
@@ -138,11 +147,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		oldOffset := m.Editor.Offset.Row
-		oldCursorRow := m.Editor.Cursor.Row
+		oldBlockIdx := m.Editor.Cursor.BlockIdx
+		oldBlockWasMath := oldBlockIdx < len(m.Editor.Blocks) && m.Editor.Blocks[oldBlockIdx].Type == editor.MathBlock
+
 		if m.mode == Insert {
 			switch msg.String() {
-			case "ctrl+c":
+			case "ctrl+c", "q":
 				return m, tea.Quit
 			case "left":
 				m.Editor.MoveCursor(0, -1)
@@ -160,6 +170,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Editor.InsertChar(' ')
 			case "esc":
 				m.mode = Normal
+				// When switching mode, we might need to render an image
+				if oldBlockWasMath {
+					return m, redrawImages(m)
+				}
 				return m, nil
 			default:
 				if msg.Text != "" {
@@ -168,7 +182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		} else {
+		} else { // NORMAL mode
 			switch msg.String() {
 			case "q", "ctrl+c":
 				return m, tea.Quit
@@ -181,50 +195,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "l", "right":
 				m.Editor.MoveCursor(0, 1)
 			case "d":
-				m.Editor.Backspace()
+				m.Editor.DeleteChar() // Use new forward-delete function
 			case "i":
 				m.mode = Insert
+				// When switching mode, we might need to hide an image
+				if oldBlockWasMath {
+					return m, redrawImages(m)
+				}
 				return m, nil
 			case "o":
 				m.Editor.EndOfLine()
 				m.Editor.InsertNewLine()
 				m.mode = Insert
-				return m, nil
+				// After 'o', we have likely moved blocks, so redraw
+				return m, redrawImages(m)
 			}
 		}
-		newOffset := m.Editor.Offset.Row
-		newCursorRow := m.Editor.Cursor.Row
 
-		wasMath := false
-		if oldCursorRow < len(m.Editor.Lines) {
-			wasMath = m.Editor.Lines[oldCursorRow].IsMath
-		}
+		newBlockIdx := m.Editor.Cursor.BlockIdx
+		newBlockIsMath := newBlockIdx < len(m.Editor.Blocks) && m.Editor.Blocks[newBlockIdx].Type == editor.MathBlock
 
-		isMath := false
-		if newCursorRow < len(m.Editor.Lines) {
-			isMath = m.Editor.Lines[newCursorRow].IsMath
-		}
-
-		if oldOffset != newOffset || wasMath || isMath {
+		// If we moved between blocks and either was a math block, we need to redraw images.
+		if oldBlockIdx != newBlockIdx && (oldBlockWasMath || newBlockIsMath) {
 			cmds = append(cmds, redrawImages(m))
 		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
 		m.Editor.SetSize(m.width, m.height-1)
 		cmds = append(cmds, redrawImages(m))
-	case LineProcessedMsg:
-		if msg.Row < len(m.Editor.Lines) {
-			m.Editor.Lines[msg.Row].Rendered = msg.Rendered
-			m.Editor.Lines[msg.Row].IsDirty = false
-			m.Editor.Lines[msg.Row].IsMath = msg.Rendered != ""
-			m.Editor.Lines[msg.Row].ImageHeight = msg.ImageHeight
+	case BlockProcessedMsg:
+		if msg.Source != "" {
+			m.CompiledMath = append(m.CompiledMath, msg.Source)
 		}
-		cmds = append(cmds, m.processDirtyLines(), redrawImages(m))
+		if msg.BlockIdx < len(m.Editor.Blocks) {
+			block := &m.Editor.Blocks[msg.BlockIdx]
+			block.Rendered = msg.Rendered
+			block.IsDirty = false
+			block.ImageHeight = msg.ImageHeight
+			block.HasError = msg.Error != nil // Set the error flag
+		}
+		cmds = append(cmds, m.processDirtyBlocks(), redrawImages(m))
 	case TickMsg:
 		m.Time = time.Time(msg)
-		return m, tea.Batch(doTick(), m.processDirtyLines())
+		return m, tea.Batch(doTick(), m.processDirtyBlocks())
 	}
 	return m, tea.Batch(cmds...)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

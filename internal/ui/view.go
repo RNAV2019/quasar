@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/RNAV2019/quasar/internal/editor"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
@@ -20,6 +21,11 @@ var (
 	gutterStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	currentLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
 	markdownRender   *glamour.TermRenderer
+
+	// Gutter indicators
+	mathGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")  // Blue
+	textGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("│") // Gray
+	errorGutterIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│") // Red
 )
 
 var modeName = map[Mode]string{
@@ -56,7 +62,7 @@ func (m Model) View() tea.View {
 	gapWidth := max(m.width-(wLeft+wCenter+wRight), 0)
 
 	gap1Width := gapWidth / 2
-	gap2Width := gapWidth - gap1Width // Ensures exact total width even with odd numbers
+	gap2Width := gapWidth - gap1Width
 
 	gap1 := clearStyle.Width(gap1Width).Render(strings.Repeat(" ", gap1Width))
 	gap2 := clearStyle.Width(gap2Width).Render(strings.Repeat(" ", gap2Width))
@@ -69,99 +75,99 @@ func (m Model) View() tea.View {
 		renderedRight,
 	)
 
-	editorLines := m.Editor.ViewLines()
-	maxLineNum := len(m.Editor.Lines)
-	gutterWidth := len(fmt.Sprint(maxLineNum))
-
-	rawDoc := strings.Join(editorLines, "\n")
-	fullRendered, _ := markdownRender.Render(rawDoc)
-
-	fullRendered = strings.TrimRight(fullRendered, "\r\n")
-	renderedLines := strings.Split(fullRendered, "\n")
-
-	safeToMap := len(renderedLines) == len(editorLines)
+	totalLines := 0
+	for _, block := range m.Editor.Blocks {
+		totalLines += len(block.Lines)
+	}
+	gutterWidth := len(fmt.Sprint(totalLines))
 
 	var contentBuilder strings.Builder
-	for i, lineStr := range editorLines {
-		actualRowIdx := m.Editor.Offset.Row + i
-		lineNum := actualRowIdx + 1
-		lineNumStr := fmt.Sprintf("%*d  ", gutterWidth, lineNum)
+	globalLineIdx := 0
+	for blockIdx, block := range m.Editor.Blocks {
+		isBlockActive := blockIdx == m.Editor.Cursor.BlockIdx
 
-		var styledGutter string
-		if actualRowIdx == m.Editor.Cursor.Row {
-			styledGutter = currentLineStyle.Render(lineNumStr)
+		var indicator string
+		if block.HasError {
+			indicator = errorGutterIndicator
+		} else if block.Type == editor.MathBlock {
+			indicator = mathGutterIndicator
 		} else {
-			styledGutter = gutterStyle.Render(lineNumStr)
+			indicator = textGutterIndicator
 		}
 
-		line := m.Editor.Lines[actualRowIdx]
+		// For all blocks, active or inactive, rendered or not, we reserve space equal to the number of raw text lines.
+		// This ensures the layout is always stable.
+		height := len(block.Lines)
 
-		contentBuilder.WriteString(styledGutter)
-		if actualRowIdx == m.Editor.Cursor.Row {
-			contentBuilder.WriteString(lineStr)
-		} else if line.IsMath && line.Rendered != "" {
-			h := max(line.ImageHeight, 1)
-			contentBuilder.WriteString(strings.Repeat("\n", h-1))
-		} else if safeToMap {
-			contentBuilder.WriteString(renderedLines[i])
+		if !isBlockActive && block.Type == editor.MathBlock && block.Rendered != "" {
+			// Inactive, rendered math block. We draw empty lines to hold space for the image overlay.
+			// The image will be drawn over this space. If the image is taller, it may be clipped.
+			for i := 0; i < height; i++ {
+				lineNum := globalLineIdx + 1 + i
+				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
+				contentBuilder.WriteString(indicator)
+				contentBuilder.WriteString(gutterStyle.Render(lineNumStr))
+				contentBuilder.WriteString("\n")
+			}
 		} else {
-			fallback, _ := markdownRender.Render(lineStr)
-			fallback = strings.Trim(fallback, "\r\n")
-			fallback = strings.TrimPrefix(fallback, "  ")
-			contentBuilder.WriteString(fallback)
+			// Active block or a text block. Render raw text.
+			for lineIdx, lineStr := range block.Lines {
+				lineNum := globalLineIdx + 1
+				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 
+				isCursorLine := isBlockActive && lineIdx == m.Editor.Cursor.LineIdx
+				var styledGutter string
+				if isCursorLine {
+					styledGutter = currentLineStyle.Render(lineNumStr)
+				} else {
+					styledGutter = gutterStyle.Render(lineNumStr)
+				}
+				contentBuilder.WriteString(indicator)
+				contentBuilder.WriteString(styledGutter)
+				contentBuilder.WriteString(lineStr)
+				contentBuilder.WriteString("\n")
+				globalLineIdx++
+			}
 		}
-		contentBuilder.WriteString("\n")
-
+		// Always advance the logical line index by the number of lines in the source.
+		// The loop for rendered blocks does not increment globalLineIdx, so we do it here.
+		if !isBlockActive && block.Type == editor.MathBlock && block.Rendered != "" {
+			globalLineIdx += len(block.Lines)
+		}
 	}
 
 	renderContentHeight := max(m.height-lipgloss.Height(statusLine), 0)
 	renderContent := clearStyle.
 		Height(renderContentHeight).
-		PaddingLeft(3).
+		PaddingLeft(2).
 		Render(contentBuilder.String())
 
 	view := lipgloss.JoinVertical(lipgloss.Top, renderContent, statusLine)
 
-	// Move terminal cursor to the correct position
-	// X: 3 (PaddingLeft) + gutterWidth + 2 (spaces) + (CursorCol - OffsetCol)
-	cursorX := 3 + gutterWidth + 2 + (m.Editor.Cursor.Col - m.Editor.Offset.Col)
+	// Move terminal cursor to the correct position.
+	cursorX := 2 + gutterWidth + 3 + m.Editor.Cursor.Col
 
-	// Y must account for the actual height of each line rendered above the cursor
 	cursorY := 0
-	for i := m.Editor.Offset.Row; i < m.Editor.Cursor.Row; i++ {
-		if i >= len(m.Editor.Lines) {
-			break
-		}
-		line := m.Editor.Lines[i]
-		if line.IsMath && line.Rendered != "" {
-			cursorY += max(line.ImageHeight, 1)
-		} else {
-			cursorY += 1
-		}
+	for i := 0; i < m.Editor.Cursor.BlockIdx; i++ {
+		// The height of every block is its line count, ensuring a stable layout.
+		cursorY += len(m.Editor.Blocks[i].Lines)
 	}
+	cursorY += m.Editor.Cursor.LineIdx
 
 	var cursorConfig tea.Cursor
 	if m.mode == Normal {
 		cursorConfig = tea.Cursor{
-			Position: tea.Position{
-				X: cursorX,
-				Y: cursorY,
-			},
-			Shape: tea.CursorBlock,
-			Blink: false,
-			Color: lipgloss.White,
+			Position: tea.Position{X: cursorX, Y: cursorY},
+			Shape:    tea.CursorBlock,
+			Blink:    false,
+			Color:    lipgloss.White,
 		}
 	} else {
 		cursorConfig = tea.Cursor{
-			Position: tea.Position{
-				X: cursorX,
-				Y: cursorY,
-			},
-			Shape: tea.CursorBar,
-			Color: lipgloss.White,
+			Position: tea.Position{X: cursorX, Y: cursorY},
+			Shape:    tea.CursorBar,
+			Color:    lipgloss.White,
 		}
-
 	}
 
 	v := tea.NewView(view)
