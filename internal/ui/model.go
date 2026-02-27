@@ -63,7 +63,7 @@ func redrawImages(m Model) tea.Cmd {
 			if actualRowIdx != m.Editor.Cursor.Row && line.IsMath && line.Rendered != "" {
 				// Calculate absolute ANSI coordinates (1-based)
 				imageX := 3 + gutterWidth + 2 + 1
-				imageY := currentY + 1
+				imageY := currentY
 
 				// Save cursor (\033[s), move to coordinate, print image, restore cursor (\033[u)
 				seq.WriteString("\033[s")
@@ -72,7 +72,7 @@ func redrawImages(m Model) tea.Cmd {
 				seq.WriteString("\033[u")
 
 				// Advance Y by the image's height plus padding
-				currentY += max(line.ImageHeight, 1) + 2
+				currentY += max(line.ImageHeight, 1)
 			} else {
 				// Standard text lines take exactly 1 row
 				currentY += 1
@@ -213,6 +213,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 		m.Editor.SetSize(m.width, m.height-1)
+		cmds = append(cmds, redrawImages(m))
 	case LineProcessedMsg:
 		if msg.Row < len(m.Editor.Lines) {
 			m.Editor.Lines[msg.Row].Rendered = msg.Rendered

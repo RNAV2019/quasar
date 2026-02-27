@@ -53,18 +53,18 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 	}
 
 	dviPath := filepath.Join(tmpDir, hashStr+".dvi")
-	tmpPngPath := filepath.Join(tmpDir, hashStr+".png")
-	dviPngCmd := exec.Command("dvipng", "-Q", "9", "-D", "1200", "-T", "tight", "-bg", "Transparent", "-fg", "White", "-o", tmpPngPath, dviPath)
+	// tmpPngPath := filepath.Join(tmpDir, hashStr+".png")
+	dviPngCmd := exec.Command("dvipng", "-Q", "9", "-D", "1800", "-T", "tight", "-bg", "Transparent", "-fg", "White", "-o", pngPath, dviPath)
 	dviPngCmd.Dir = tmpDir
 
 	if err := dviPngCmd.Run(); err != nil {
 		return "", fmt.Errorf("DVIPNG error: %w", err)
 	}
 
-	magickCmd := exec.Command("magick", "convert", tmpPngPath, "-antialias", "-resize", "30%", pngPath)
-	if err := magickCmd.Run(); err != nil {
-		return "", fmt.Errorf("ImageMagick error: %w", err)
-	}
+	// magickCmd := exec.Command("magick", "convert", tmpPngPath, "-resize", "50%", pngPath)
+	// if err := magickCmd.Run(); err != nil {
+	// return "", fmt.Errorf("ImageMagick error: %w", err)
+	// }
 
 	return pngPath, nil
 }

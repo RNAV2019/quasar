@@ -55,16 +55,10 @@ func (m *Model) MoveCursor(rowDelta, colDelta int) {
 
 	// Calculate new col within bounds
 	lineLen := len(m.Lines[m.Cursor.Row].Raw)
-	newCol := max(m.Cursor.Col+colDelta, 0)
-	if newCol > lineLen {
-		newCol = lineLen
-	}
-	m.Cursor.Col = newCol
+	newCol := min(max(m.Cursor.Col+colDelta, 0), lineLen)
 
 	// Snap cursor if next line is shorter than current line
-	if m.Cursor.Col > len(m.Lines[m.Cursor.Row].Raw) {
-		m.Cursor.Col = len(m.Lines[m.Cursor.Row].Raw)
-	}
+	m.Cursor.Col = min(newCol, len(m.Lines[m.Cursor.Row].Raw))
 
 	m.ensureCursorInView()
 }
@@ -97,10 +91,7 @@ func (m *Model) ensureCursorInView() {
 func (m Model) ViewLines() []string {
 	var visibleLines []string
 
-	endRow := m.Offset.Row + m.Height
-	if endRow > len(m.Lines) {
-		endRow = len(m.Lines)
-	}
+	endRow := min(m.Offset.Row+m.Height, len(m.Lines))
 
 	for i := m.Offset.Row; i < endRow; i++ {
 		line := m.Lines[i]

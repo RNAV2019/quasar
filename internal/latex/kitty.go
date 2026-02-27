@@ -10,8 +10,6 @@ import (
 )
 
 // EncodeImageForKitty wraps an image in Kitty graphics protocol escape sequences.
-// We use the 'file' transmission mode (t=f) for efficiency, which tells Kitty
-// to read the image directly from the specified path.
 func EncodeImageForKitty(pngPath string) (string, int, error) {
 	image, err := termimg.Open(pngPath)
 	if err != nil {
@@ -26,7 +24,7 @@ func EncodeImageForKitty(pngPath string) (string, int, error) {
 		characterHeight = 16 // Fallback
 	}
 
-	rows := int(math.Round(float64(imageHeight) / float64(characterHeight)))
+	rows := int(math.Round(float64(imageHeight) / float64(characterHeight) / 6))
 	rows = max(rows, 1)
 
 	renderedString, err := image.

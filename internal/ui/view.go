@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/glamour"
 )
 
 var (
@@ -18,12 +19,25 @@ var (
 
 	gutterStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	currentLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
+	markdownRender   *glamour.TermRenderer
 )
 
 var modeName = map[Mode]string{
 	Normal: "NORMAL",
 	Insert: "INSERT",
 	Select: "SELECT",
+}
+
+func init() {
+	customStyle := createStyle()
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(customStyle),
+		glamour.WithWordWrap(0),
+	)
+	if err != nil {
+		panic(err)
+	}
+	markdownRender = renderer
 }
 
 func (m Model) View() tea.View {
@@ -59,6 +73,14 @@ func (m Model) View() tea.View {
 	maxLineNum := len(m.Editor.Lines)
 	gutterWidth := len(fmt.Sprint(maxLineNum))
 
+	rawDoc := strings.Join(editorLines, "\n")
+	fullRendered, _ := markdownRender.Render(rawDoc)
+
+	fullRendered = strings.TrimRight(fullRendered, "\r\n")
+	renderedLines := strings.Split(fullRendered, "\n")
+
+	safeToMap := len(renderedLines) == len(editorLines)
+
 	var contentBuilder strings.Builder
 	for i, lineStr := range editorLines {
 		actualRowIdx := m.Editor.Offset.Row + i
@@ -73,18 +95,24 @@ func (m Model) View() tea.View {
 		}
 
 		line := m.Editor.Lines[actualRowIdx]
-		isRenderedMath := actualRowIdx != m.Editor.Cursor.Row && line.IsMath && line.Rendered != ""
 
-		if isRenderedMath {
-			contentBuilder.WriteString("\n")
-			contentBuilder.WriteString(styledGutter)
-			h := max(line.ImageHeight, 1)
-			contentBuilder.WriteString(strings.Repeat("\n", h+1))
-		} else {
-			contentBuilder.WriteString(styledGutter)
+		contentBuilder.WriteString(styledGutter)
+		if actualRowIdx == m.Editor.Cursor.Row {
 			contentBuilder.WriteString(lineStr)
-			contentBuilder.WriteString("\n")
+		} else if line.IsMath && line.Rendered != "" {
+			h := max(line.ImageHeight, 1)
+			contentBuilder.WriteString(strings.Repeat("\n", h-1))
+		} else if safeToMap {
+			contentBuilder.WriteString(renderedLines[i])
+		} else {
+			fallback, _ := markdownRender.Render(lineStr)
+			fallback = strings.Trim(fallback, "\r\n")
+			fallback = strings.TrimPrefix(fallback, "  ")
+			contentBuilder.WriteString(fallback)
+
 		}
+		contentBuilder.WriteString("\n")
+
 	}
 
 	renderContentHeight := max(m.height-lipgloss.Height(statusLine), 0)
@@ -107,7 +135,7 @@ func (m Model) View() tea.View {
 		}
 		line := m.Editor.Lines[i]
 		if line.IsMath && line.Rendered != "" {
-			cursorY += max(line.ImageHeight, 1) + 2
+			cursorY += max(line.ImageHeight, 1)
 		} else {
 			cursorY += 1
 		}
