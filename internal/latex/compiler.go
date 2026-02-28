@@ -22,7 +22,7 @@ func isMathEnvironment(s string) bool {
 	return false
 }
 
-func CompileToPNG(math string, cacheDir string) (string, error) {
+func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	// Ensure the content is wrapped in a proper math environment if it isn't already.
 	processedMath := strings.TrimSpace(math)
 	if !isMathEnvironment(processedMath) {
@@ -30,7 +30,7 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 		processedMath = fmt.Sprintf("\\begin{gather*}%s\\end{gather*}", processedMath)
 	}
 
-	hash := sha256.Sum256([]byte(processedMath))
+	hash := sha256.Sum256([]byte(processedMath + fmt.Sprintf("%v", isInline)))
 	hashStr := hex.EncodeToString(hash[:])
 	pngPath := filepath.Join(cacheDir, hashStr+".png")
 
@@ -41,6 +41,11 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 	tmpDir, err := os.MkdirTemp(cacheDir, "compile-*")
 	if err != nil {
 		return "", fmt.Errorf("Failed to create temporary directory: %w", err)
+	}
+
+	margins := "10 10 10 10"
+	if isInline {
+		margins = "5 0 5 0"
 	}
 
 	template := `\documentclass[preview,border=2pt]{standalone}
@@ -61,9 +66,6 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 		return "", err
 	}
 
-	// --- New Pipeline: pdflatex -> pdfcrop -> convert ---
-
-	// 1. Run pdflatex
 	pdfLatexCmd := exec.Command("pdflatex", "-interaction=nonstopmode", "-output-directory="+tmpDir, texPath)
 	if output, err := pdfLatexCmd.CombinedOutput(); err != nil {
 		logPath := filepath.Join(tmpDir, hashStr+".log")
@@ -76,21 +78,15 @@ func CompileToPNG(math string, cacheDir string) (string, error) {
 		return "", fmt.Errorf("PDF file not found after successful pdflatex compilation")
 	}
 
-	// 2. Run pdfcrop
 	croppedPdfPath := filepath.Join(tmpDir, hashStr+"-crop.pdf")
-	pdfCropCmd := exec.Command("pdfcrop", "--margins", "10", pdfPath, croppedPdfPath)
+	pdfCropCmd := exec.Command("pdfcrop", "--margins", margins, pdfPath, croppedPdfPath)
 	if _, err := pdfCropCmd.CombinedOutput(); err != nil {
-		// pdfcrop can be noisy; we don't treat its failure as fatal.
-		// We'll just use the uncropped PDF as a fallback.
 		croppedPdfPath = pdfPath
 	}
 	if _, err := os.Stat(croppedPdfPath); os.IsNotExist(err) {
 		croppedPdfPath = pdfPath
 	}
 
-	// 3. Run convert (ImageMagick) to create the final PNG
-	//    -transparent white: makes the white background transparent
-	//    -negate: inverts the colors, turning the black text to white
 	convertCmd := exec.Command("magick", "-density", "1800", croppedPdfPath, "-background", "transparent", "-fill", "white", "-opaque", "black", pngPath)
 	if output, err := convertCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("ImageMagick convert execution failed.\nError: %w\nOutput: %s", err, string(output))

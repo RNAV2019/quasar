@@ -1,7 +1,5 @@
 package editor
 
-import "math"
-
 type BlockType int
 
 const (
@@ -44,7 +42,7 @@ func NewModel() Model {
 				Type: TextBlock,
 				Lines: []string{
 					"Welcome to quasar notes",
-					"Type $$ to create a math block.",
+					"Type your notes and maths here",
 				},
 				IsDirty: true,
 			},
@@ -120,6 +118,35 @@ func (m *Model) InsertChar(r rune) {
 	block := &m.Blocks[m.Cursor.BlockIdx]
 	block.HasError = false // Reset error state on edit
 	line := &block.Lines[m.Cursor.LineIdx]
+
+	if r == '$' && block.Type == TextBlock {
+		runes := []rune(*line)
+		// Check if part of $$ block
+		if m.Cursor.Col > 0 && runes[m.Cursor.Col-1] == '$' {
+			// User typed '$$'. Let's convert the first '$' to a multiline math block.
+			// The `splitBlockForMath` function expects the cursor to be after '$$'.
+			if m.Cursor.Col < len(runes) && runes[m.Cursor.Col] == '$' {
+				// If the next character is the auto-inserted '$', swallow it.
+				*line = string(runes[:m.Cursor.Col-1]) + "$$" + string(runes[m.Cursor.Col+1:])
+			} else {
+				*line = string(runes[:m.Cursor.Col-1]) + "$$" + string(runes[m.Cursor.Col:])
+			}
+			m.Cursor.Col++ // move cursor to be after '$$'
+			m.splitBlockForMath()
+			return
+		} else {
+			// This is the first '$'. Insert '$$' and place cursor in the middle.
+			if m.Cursor.Col >= len(runes) {
+				*line += "$$"
+			} else {
+				*line = string(runes[:m.Cursor.Col]) + "$$" + string(runes[m.Cursor.Col:])
+			}
+			m.Cursor.Col++
+			block.IsDirty = true
+			return
+		}
+	}
+
 	runes := []rune(*line)
 
 	if m.Cursor.Col >= len(runes) {
@@ -129,15 +156,6 @@ func (m *Model) InsertChar(r rune) {
 	}
 	*line = string(runes)
 	m.Cursor.Col++
-
-	if r == '$' && block.Type == TextBlock && m.Cursor.Col > 1 {
-		if runes[m.Cursor.Col-2] == '$' {
-			m.splitBlockForMath()
-			// After splitting, the state has changed significantly, so we return.
-			// The redraw will be handled by the main update loop.
-			return
-		}
-	}
 
 	block.IsDirty = true
 }
@@ -212,7 +230,7 @@ func (m *Model) Backspace() {
 	// --- Special Case: Delete MathBlock on backspace on empty last line ---
 	isAtStartOfLine := m.Cursor.Col == 0
 	isLastLine := m.Cursor.LineIdx == len(block.Lines)-1
-	
+
 	if block.Type == MathBlock && isAtStartOfLine && isLastLine && block.Lines[m.Cursor.LineIdx] == "" && len(block.Lines) > 2 {
 		currentBlockIdx := m.Cursor.BlockIdx
 		if currentBlockIdx > 0 {
@@ -221,12 +239,14 @@ func (m *Model) Backspace() {
 
 			m.Cursor.BlockIdx = prevBlockIndex
 			m.Cursor.LineIdx = len(prevBlock.Lines) - 1
-			if m.Cursor.LineIdx < 0 { m.Cursor.LineIdx = 0 }
+			if m.Cursor.LineIdx < 0 {
+				m.Cursor.LineIdx = 0
+			}
 			m.Cursor.Col = 0
 			if len(prevBlock.Lines) > 0 {
 				m.Cursor.Col = len(prevBlock.Lines[m.Cursor.LineIdx])
 			}
-			
+
 			m.Blocks = append(m.Blocks[:currentBlockIdx], m.Blocks[currentBlockIdx+1:]...)
 		} else {
 			*block = Block{Type: TextBlock, Lines: []string{""}}
@@ -262,7 +282,9 @@ func (m *Model) Backspace() {
 
 		newCursorBlockIdx := prevBlockIndex
 		newCursorLineIdx := len(prevBlock.Lines) - 1
-		if newCursorLineIdx < 0 { newCursorLineIdx = 0 }
+		if newCursorLineIdx < 0 {
+			newCursorLineIdx = 0
+		}
 		newCursorCol := 0
 		if len(prevBlock.Lines) > 0 {
 			newCursorCol = len(prevBlock.Lines[newCursorLineIdx])
@@ -276,7 +298,7 @@ func (m *Model) Backspace() {
 		}
 		prevBlock.IsDirty = true
 		m.Blocks = append(m.Blocks[:m.Cursor.BlockIdx], m.Blocks[m.Cursor.BlockIdx+1:]...)
-		
+
 		m.Cursor.BlockIdx = newCursorBlockIdx
 		m.Cursor.LineIdx = newCursorLineIdx
 		m.Cursor.Col = newCursorCol
@@ -305,7 +327,7 @@ func (m *Model) InsertNewLine() {
 		lineContent := block.Lines[m.Cursor.LineIdx]
 		if isLastLine && lineContent == "$$" {
 			newTextBlock := Block{Type: TextBlock, Lines: []string{""}}
-			
+
 			insertIndex := m.Cursor.BlockIdx + 1
 			if insertIndex < len(m.Blocks) {
 				m.Blocks = append(m.Blocks[:insertIndex], append([]Block{newTextBlock}, m.Blocks[insertIndex:]...)...)
@@ -338,6 +360,3 @@ func (m *Model) InsertNewLine() {
 	m.ensureCursorInView()
 }
 
-func max(a, b int) int {
-	return int(math.Max(float64(a), float64(b)))
-}

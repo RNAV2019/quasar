@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RNAV2019/quasar/internal/editor"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/RNAV2019/quasar/internal/editor"
 	"github.com/charmbracelet/glamour"
 )
 
@@ -112,11 +112,40 @@ func (m Model) View() tea.View {
 		} else {
 			// Active block or a text block. Render raw text.
 			for lineIdx, lineStr := range block.Lines {
+				// Blank out if needed
+				shouldBlank := true
+				if m.mode == Insert && isBlockActive {
+					shouldBlank = false
+				}
+				
+				if shouldBlank {
+					runes := []rune(lineStr)
+					for key, render := range m.InlineRenders {
+						var bIdx, lIdx, startCol int
+						fmt.Sscanf(key, "%d-%d-%d", &bIdx, &lIdx, &startCol)
+						if bIdx == blockIdx && lIdx == lineIdx {
+							// In Normal mode, if we are hovering this expression, don't blank it (show raw)
+							isHovered := m.mode == Normal && isBlockActive && lineIdx == m.Editor.Cursor.LineIdx &&
+								m.Editor.Cursor.Col >= startCol && m.Editor.Cursor.Col < startCol+render.Length
+
+							if !isHovered {
+								// Blank out the content
+								for i := startCol; i < startCol+render.Length; i++ {
+									if i < len(runes) {
+										runes[i] = ' '
+									}
+								}
+							}
+						}
+					}
+					lineStr = string(runes)
+				}
+
 				lineNum := globalLineIdx + 1
 				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 
-				isCursorLine := isBlockActive && lineIdx == m.Editor.Cursor.LineIdx
 				var styledGutter string
+				isCursorLine := isBlockActive && lineIdx == m.Editor.Cursor.LineIdx
 				if isCursorLine {
 					styledGutter = currentLineStyle.Render(lineNumStr)
 				} else {
