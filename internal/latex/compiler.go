@@ -8,7 +8,51 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+var (
+	compileLocks   = make(map[string]*sync.Mutex)
+	compileLocksMu sync.Mutex
+)
+
+func getCompileLock(hash string) *sync.Mutex {
+	compileLocksMu.Lock()
+	defer compileLocksMu.Unlock()
+	if _, ok := compileLocks[hash]; !ok {
+		compileLocks[hash] = &sync.Mutex{}
+	}
+	return compileLocks[hash]
+}
+
+// PNGPath returns the path where the PNG for the given math content would be cached.
+func PNGPath(math string, cacheDir string, isInline bool) string {
+	processedMath := strings.TrimSpace(math)
+	if !isMathEnvironment(processedMath) {
+		processedMath = fmt.Sprintf("\\begin{gather*}%s\\end{gather*}", processedMath)
+	}
+	hash := sha256.Sum256([]byte(processedMath + fmt.Sprintf("%v", isInline)))
+	hashStr := hex.EncodeToString(hash[:])
+	return filepath.Join(cacheDir, hashStr+".png")
+}
+
+// CleanupUnusedPNGs removes PNG files that are no longer referenced by any current math content.
+func CleanupUnusedPNGs(cacheDir string, currentMathPaths map[string]bool) error {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".png") {
+			continue
+		}
+		path := filepath.Join(cacheDir, entry.Name())
+		if !currentMathPaths[path] {
+			os.Remove(path)
+		}
+	}
+	return nil
+}
 
 // isMathEnvironment checks if a string starts with a LaTeX environment that provides its own math mode.
 func isMathEnvironment(s string) bool {
@@ -34,6 +78,17 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	hashStr := hex.EncodeToString(hash[:])
 	pngPath := filepath.Join(cacheDir, hashStr+".png")
 
+	// Check if PNG already exists
+	if _, err := os.Stat(pngPath); err == nil {
+		return pngPath, nil
+	}
+
+	// Serialize compilation for the same content to avoid duplicate compile folders
+	lock := getCompileLock(hashStr)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Check again after acquiring lock (another goroutine may have just finished)
 	if _, err := os.Stat(pngPath); err == nil {
 		return pngPath, nil
 	}
@@ -42,6 +97,7 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Failed to create temporary directory: %w", err)
 	}
+	defer os.RemoveAll(tmpDir)
 
 	margins := "10 10 10 10"
 	if isInline {
@@ -87,7 +143,7 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 		croppedPdfPath = pdfPath
 	}
 
-	convertCmd := exec.Command("magick", "-density", "1800", croppedPdfPath, "-background", "transparent", "-fill", "white", "-opaque", "black", pngPath)
+	convertCmd := exec.Command("magick", "-density", "2500", croppedPdfPath, "-background", "transparent", "-fill", "white", "-opaque", "black", pngPath)
 	if output, err := convertCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("ImageMagick convert execution failed.\nError: %w\nOutput: %s", err, string(output))
 	}

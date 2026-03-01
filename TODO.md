@@ -2,7 +2,7 @@
 - [X] Add padding top and bottom of math expression
 - [X] Determine the height requirement for an expression to render and insert that many new lines -> Set height via Kitty Display Protocol
 - [X] Generalize math syntax to work for multiline expressions
-- [ ] Add inline math ability
+- [X] Add inline math ability
 - [ ] When using D to delete it should wrap next line to cursor
 - [ ] Implement syntax highlighting for markdown
 - [ ] Ensure all/most markdown features work and pretty print

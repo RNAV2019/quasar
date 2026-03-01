@@ -63,6 +63,40 @@ type InlineMathRender struct {
 
 var inlineMathRe = regexp.MustCompile(`\$[^\$]*\$`)
 
+func (m *Model) currentMathPaths() map[string]bool {
+	paths := make(map[string]bool)
+	for _, block := range m.Editor.Blocks {
+		switch block.Type {
+		case editor.MathBlock:
+			lines := block.Lines
+			if len(lines) >= 2 && lines[0] == "$$" && lines[len(lines)-1] == "$$" {
+				lines = lines[1 : len(lines)-1]
+			}
+			start := 0
+			for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+				start++
+			}
+			content := strings.Join(lines[start:], "\n")
+			if content != "" {
+				path := latex.PNGPath(content, m.Config.CacheDir, false)
+				paths[path] = true
+			}
+		case editor.TextBlock:
+			for _, line := range block.Lines {
+				matches := inlineMathRe.FindAllStringIndex(line, -1)
+				for _, match := range matches {
+					content := line[match[0]+1 : match[1]-1]
+					if content != "" {
+						path := latex.PNGPath(content, m.Config.CacheDir, true)
+						paths[path] = true
+					}
+				}
+			}
+		}
+	}
+	return paths
+}
+
 func doTick() tea.Cmd {
 	return tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
 		return TickMsg(t)
@@ -286,13 +320,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TickMsg:
 		m.Time = time.Time(msg)
+		isIdle := true
 		if m.PendingRenders == 0 {
 			for _, b := range m.Editor.Blocks {
 				if b.IsDirty {
 					cmds = append(cmds, m.processDirtyBlocks())
+					isIdle = false
 					break
 				}
 			}
+		} else {
+			isIdle = false
+		}
+		if isIdle {
+			currentPaths := m.currentMathPaths()
+			latex.CleanupUnusedPNGs(m.Config.CacheDir, currentPaths)
 		}
 		return m, tea.Batch(doTick(), tea.Batch(cmds...))
 	}
