@@ -4,7 +4,7 @@
 - [X] Generalize math syntax to work for multiline expressions
 - [X] Add inline math ability
 - [ ] When using D to delete it should wrap next line to cursor
-- [ ] Ensure all/most markdown features work and pretty print
+- [X] Ensure all/most markdown features work and pretty print
 - [X] Optimize redraws of the image
 - [X] Implement syntax highlighting for markdown
 - [ ] Improve statusline
@@ -13,4 +13,5 @@
 - [ ] Implement save/opening of md files
 - [ ] Add file browser on left side for notes
 - [ ] Create folder hierachy based off of tags
+- [ ] Implement snippet t_{r}_{c} to build a markdown table with r rows and c columns
 - [ ] Implement gw

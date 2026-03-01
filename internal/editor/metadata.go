@@ -56,29 +56,40 @@ func ExtractFrontMatter(content []string) (*Metadata, []string, error) {
 }
 
 // ToMarkdownContent converts blocks to markdown with front matter
-func (m *Model) ToMarkdownContent(metadata *Metadata) ([]string, error) {
+// If preserveFrontMatter is provided, it uses those front matter lines
+// and skips front matter in the first block to avoid duplication
+func (m *Model) ToMarkdownContent(preserveFrontMatter []string) ([]string, error) {
 	var lines []string
 
-	// Add front matter if metadata exists
-	if metadata != nil && metadata.Title != "" {
-		lines = append(lines, "---")
-		yamlBytes, err := yaml.Marshal(metadata)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
-		}
-		yamlLines := strings.Split(strings.TrimSpace(string(yamlBytes)), "\n")
-		lines = append(lines, yamlLines...)
-		lines = append(lines, "---")
-		lines = append(lines, "") // blank line after front matter
+	// Preserve original front matter if it exists
+	if len(preserveFrontMatter) > 0 {
+		lines = append(lines, preserveFrontMatter...)
 	}
 
 	// Convert blocks to markdown
-	for _, block := range m.Blocks {
+	for blockIdx, block := range m.Blocks {
+		content := block.Lines
+
+		// If we have preserved front matter, skip front matter lines in the first block
+		if blockIdx == 0 && len(preserveFrontMatter) > 0 && len(content) > 0 && content[0] == "---" {
+			// Find where front matter ends in this block
+			for i := 1; i < len(content); i++ {
+				if content[i] == "---" {
+					// Skip past the closing --- and any leading empty lines
+					content = content[i+1:]
+					for len(content) > 0 && content[0] == "" {
+						content = content[1:]
+					}
+					break
+				}
+			}
+		}
+
 		switch block.Type {
 		case TextBlock:
-			lines = append(lines, block.Lines...)
+			lines = append(lines, content...)
 		case MathBlock:
-			lines = append(lines, block.Lines...)
+			lines = append(lines, content...)
 		}
 		lines = append(lines, "") // blank line between blocks
 	}
@@ -152,7 +163,7 @@ func (m *Model) SaveToFile(notesDir string) error {
 	}
 
 	// Extract front matter from current content  
-	metadata, remainingLines, err := ExtractFrontMatter(allLines)
+	metadata, _, err := ExtractFrontMatter(allLines)
 	if err != nil {
 		return fmt.Errorf("failed to parse front matter: %w", err)
 	}
@@ -170,11 +181,21 @@ func (m *Model) SaveToFile(notesDir string) error {
 	filename := SanitizeFilename(metadata.Title) + ".md"
 	filepath := filepath.Join(notesDir, filename)
 
-	// Create a content-only model from remaining lines (without front matter)
-	contentOnlyModel := m.createModelFromLines(remainingLines)
+	// Get the original front matter lines to preserve
+	var frontMatterLines []string
+	if len(allLines) > 0 && allLines[0] == "---" {
+		// Find closing delimiter
+		for i := 1; i < len(allLines); i++ {
+			if allLines[i] == "---" {
+				// Include both --- delimiters
+				frontMatterLines = allLines[:i+1]
+				break
+			}
+		}
+	}
 
-	// Convert to markdown content (this will add front matter + content)
-	content, err := contentOnlyModel.ToMarkdownContent(metadata)
+	// Convert to markdown content preserving original front matter
+	content, err := m.ToMarkdownContent(frontMatterLines)
 	if err != nil {
 		return fmt.Errorf("failed to generate markdown content: %w", err)
 	}

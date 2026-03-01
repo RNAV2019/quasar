@@ -35,13 +35,18 @@ type Model struct {
 	Height int
 }
 
-// Initialize the editor with default values
+// Initialize the editor with default values and default front matter
 func NewModel() Model {
 	return Model{
 		Blocks: []Block{
 			{
 				Type: TextBlock,
 				Lines: []string{
+					"---",
+					"title: ",
+					"tags: []",
+					"---",
+					"",
 					"Welcome to quasar notes",
 					"Type your notes and maths here",
 				},

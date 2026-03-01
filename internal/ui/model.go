@@ -33,6 +33,7 @@ type Model struct {
 	CompiledMath   []string
 	CommandBuffer  string
 	StatusMessage  string
+	ParsedDoc      *editor.Document // Parsed document structure
 }
 
 type TickMsg time.Time
@@ -173,10 +174,15 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// updateParsedDoc re-parses the document when blocks change
+func (m *Model) updateParsedDoc() {
+	m.ParsedDoc = editor.ParseDocument(m.Editor.Blocks)
+}
+
 // executeCommand handles command mode commands
 func (m *Model) executeCommand() error {
 	cmd := strings.TrimSpace(m.CommandBuffer)
-	
+
 	switch cmd {
 	case "w", "write":
 		if err := m.Editor.SaveToFile(m.Config.NotesDir); err != nil {
@@ -193,13 +199,16 @@ func (m *Model) executeCommand() error {
 }
 
 func InitialModel(cfg *config.Config) Model {
-	return Model{
+	m := Model{
 		mode:          Normal,
 		Time:          time.Now(),
 		Editor:        editor.NewModel(),
 		Config:        cfg,
 		InlineRenders: make(map[string]InlineMathRender),
 	}
+	// Initialize parsed document
+	m.ParsedDoc = editor.ParseDocument(m.Editor.Blocks)
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
@@ -230,6 +239,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Editor.Backspace()
 			case "enter":
 				m.Editor.InsertNewLine()
+			case "tab":
+				m.Editor.InsertChar('\t')
 			case "space":
 				m.Editor.InsertChar(' ')
 			case "esc":
@@ -349,6 +360,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.PendingRenders == 0 {
 			for _, b := range m.Editor.Blocks {
 				if b.IsDirty {
+					// Re-parse document when blocks are dirty
+					m.updateParsedDoc()
 					cmds = append(cmds, m.processDirtyBlocks())
 					break
 				}

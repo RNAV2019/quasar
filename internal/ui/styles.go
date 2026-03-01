@@ -104,8 +104,8 @@ func createStyle() ansi.StyleConfig {
 	customStyle.ImageText.BlockPrefix = ""
 	customStyle.ImageText.BlockSuffix = ""
 
-	// Horizontal Rule - disable rendering to avoid YAML front matter interference
-	customStyle.HorizontalRule.Format = ""
+	// Horizontal Rule - re-enable but strip leading empty lines first to avoid YAML interference
+	customStyle.HorizontalRule.Format = "───────────────────────────────────────────"
 
 	return customStyle
 }

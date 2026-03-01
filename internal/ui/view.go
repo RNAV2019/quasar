@@ -31,8 +31,9 @@ var (
 )
 
 type renderedBlock struct {
-	lines           []string
-	contentStartIdx int // Index in block.Lines where actual content starts (after front matter)
+	lines             [][]string
+	contentStartIdx   int
+	inlineMathChecker func(lineIdx int) bool
 }
 
 var modeName = map[Mode]string{
@@ -54,59 +55,196 @@ func init() {
 	markdownRender = renderer
 }
 
-// stripFrontMatter removes YAML front matter from content.
-// If the content starts with "---" followed by a newline, it removes everything
-// up to and including the next "---" line.
-// Returns the stripped content and the line index where content starts.
-func stripFrontMatter(content string) (string, int) {
-	lines := strings.Split(content, "\n")
-	if len(lines) < 3 {
-		return content, 0
+
+func trimEmptyLines(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return lines[start:end]
+}
+
+func renderGlamourLines(content string) []string {
+	out, err := markdownRender.Render(content)
+	if err != nil {
+		return nil
+	}
+	return trimEmptyLines(strings.Split(strings.TrimRight(out, "\n"), "\n"))
+}
+
+func distributeLines(rendered [][]string, start int, inputCount int, outLines []string) {
+	if len(outLines) <= inputCount {
+		for j := 0; j < inputCount; j++ {
+			if j < len(outLines) {
+				rendered[start+j] = []string{outLines[j]}
+			} else {
+				rendered[start+j] = []string{""}
+			}
+		}
+	} else {
+		linesPerInput := len(outLines) / inputCount
+		extra := len(outLines) % inputCount
+		outIdx := 0
+		for j := 0; j < inputCount; j++ {
+			count := linesPerInput
+			if j < extra {
+				count++
+			}
+			rendered[start+j] = outLines[outIdx : outIdx+count]
+			outIdx += count
+		}
+	}
+}
+
+// renderTextBlockWithGlamour renders a text block using glamour.
+// Single lines are rendered individually. Code blocks and tables are
+// rendered as groups so glamour can produce syntax highlighting and borders.
+func (m Model) renderTextBlockWithGlamour(blockIdx int, block editor.Block) renderedBlock {
+	if len(block.Lines) == 0 {
+		return renderedBlock{lines: [][]string{{""}}}
 	}
 
-	// Check if first line is "---"
-	if strings.TrimSpace(lines[0]) != "---" {
-		return content, 0
-	}
+	var contentStartIdx int
+	var hasInlineMath func(lineIdx int) bool
 
-	// Find the closing "---"
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			// Return everything after the closing "---" and the index where it starts
-			return strings.Join(lines[i+1:], "\n"), i + 1
+	if m.ParsedDoc != nil && blockIdx < len(m.ParsedDoc.Blocks) {
+		parsedBlock := m.ParsedDoc.Blocks[blockIdx]
+		contentStartIdx = parsedBlock.FrontMatterEnd
+		hasInlineMath = parsedBlock.HasInlineMath
+	} else {
+		if len(block.Lines) >= 3 && strings.TrimSpace(block.Lines[0]) == "---" {
+			for i := 1; i < len(block.Lines); i++ {
+				if strings.TrimSpace(block.Lines[i]) == "---" {
+					contentStartIdx = i + 1
+					for contentStartIdx < len(block.Lines) && strings.TrimSpace(block.Lines[contentStartIdx]) == "" {
+						contentStartIdx++
+					}
+					break
+				}
+			}
+		}
+		hasInlineMath = func(lineIdx int) bool {
+			if lineIdx >= len(block.Lines) {
+				return false
+			}
+			return len(inlineMathRe.FindStringIndex(block.Lines[lineIdx])) > 0
 		}
 	}
 
-	return content, 0
-}
-
-// renderTextBlockWithGlamour renders a text block's content using glamour.
-// It returns rendered markdown lines. Lines with inline math or that are cursor line
-// will return empty string in the lines slice (to be rendered as raw text).
-func (m Model) renderTextBlockWithGlamour(block editor.Block) renderedBlock {
-	if len(block.Lines) == 0 {
-		return renderedBlock{lines: []string{""}, contentStartIdx: 0}
+	rendered := make([][]string, len(block.Lines))
+	for i := 0; i < contentStartIdx && i < len(block.Lines); i++ {
+		rendered[i] = nil
 	}
 
-	// Join lines with newlines for multi-line markdown
-	content := strings.Join(block.Lines, "\n")
+	i := contentStartIdx
+	for i < len(block.Lines) {
+		line := block.Lines[i]
+		trimmed := strings.TrimSpace(line)
 
-	// Strip YAML front matter (between --- delimiters) before rendering
-	content, contentStartIdx := stripFrontMatter(content)
+		if trimmed == "" {
+			rendered[i] = []string{""}
+			i++
+			continue
+		}
 
-	rendered, err := markdownRender.Render(content)
-	if err != nil {
-		return renderedBlock{lines: block.Lines}
+		// Fenced code block
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fenceChar := string(rune(trimmed[0]))
+			end := i + 1
+			closed := false
+			for end < len(block.Lines) {
+				et := strings.TrimSpace(block.Lines[end])
+				if len(et) >= 3 && strings.TrimLeft(et, fenceChar) == "" {
+					closed = true
+					end++
+					break
+				}
+				end++
+			}
+
+			regionLines := make([]string, end-i)
+			copy(regionLines, block.Lines[i:end])
+			if !closed {
+				regionLines = append(regionLines, fenceChar+fenceChar+fenceChar)
+			}
+
+			outLines := renderGlamourLines(strings.Join(regionLines, "\n"))
+			if outLines == nil {
+				for j := i; j < end; j++ {
+					rendered[j] = []string{block.Lines[j]}
+				}
+			} else {
+				rendered[i] = []string{block.Lines[i]}
+				closingIdx := end - 1
+				if closed && closingIdx > i {
+					rendered[closingIdx] = []string{block.Lines[closingIdx]}
+				}
+				contentStart := i + 1
+				contentEnd := end
+				if closed {
+					contentEnd = end - 1
+				}
+				for j := contentStart; j < contentEnd; j++ {
+					outIdx := j - contentStart
+					if outIdx < len(outLines) {
+						rendered[j] = []string{outLines[outIdx]}
+					} else {
+						rendered[j] = []string{block.Lines[j]}
+					}
+				}
+			}
+			i = end
+			continue
+		}
+
+		// Table (contiguous lines starting with |)
+		if strings.HasPrefix(trimmed, "|") {
+			end := i + 1
+			for end < len(block.Lines) && strings.HasPrefix(strings.TrimSpace(block.Lines[end]), "|") {
+				end++
+			}
+			if end-i >= 2 {
+				outLines := renderGlamourLines(strings.Join(block.Lines[i:end], "\n"))
+				if outLines == nil {
+					for j := i; j < end; j++ {
+						rendered[j] = []string{block.Lines[j]}
+					}
+				} else {
+					distributeLines(rendered, i, end-i, outLines)
+				}
+				i = end
+				continue
+			}
+		}
+
+		// Single line
+		out, err := markdownRender.Render(line)
+		if err != nil {
+			rendered[i] = []string{line}
+			i++
+			continue
+		}
+		out = strings.TrimRight(out, "\n")
+		parts := strings.Split(out, "\n")
+		rendered[i] = []string{""}
+		for _, p := range parts {
+			if strings.TrimSpace(p) != "" {
+				rendered[i] = []string{p}
+				break
+			}
+		}
+		i++
 	}
 
-	// Split into lines
-	lines := strings.Split(rendered, "\n")
-	// Remove trailing empty line that glamour often adds
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+	return renderedBlock{
+		lines:             rendered,
+		contentStartIdx:   contentStartIdx,
+		inlineMathChecker: hasInlineMath,
 	}
-
-	return renderedBlock{lines: lines, contentStartIdx: contentStartIdx}
 }
 
 func (m Model) View() tea.View {
@@ -204,43 +342,47 @@ func (m Model) View() tea.View {
 			}
 			globalLineIdx += height
 		} else if useMarkdown {
-			// Render TextBlock with glamour in Normal mode
-			// Only render markdown for non-cursor lines and lines without inline math
-			rendered := m.renderTextBlockWithGlamour(block)
+			rendered := m.renderTextBlockWithGlamour(blockIdx, block)
 			visualLineMap[blockIdx] = make([]int, len(block.Lines))
-			for i := range block.Lines {
-				visualLineMap[blockIdx][i] = 1
-			}
 
 			for lineIdx, lineStr := range block.Lines {
 				isCursorLine := isBlockActive && lineIdx == m.Editor.Cursor.LineIdx
-				hasInlineMath := len(inlineMathRe.FindStringIndex(lineStr)) > 0
+				hasInlineMath := rendered.inlineMathChecker != nil && rendered.inlineMathChecker(lineIdx)
 
-				var displayLine string
-				// Only render markdown for non-cursor lines without inline math
-				// Also need to ensure lineIdx is after front matter (contentStartIdx)
-				renderedIdx := lineIdx - rendered.contentStartIdx
-				if !isCursorLine && !hasInlineMath && renderedIdx >= 0 && renderedIdx < len(rendered.lines) {
-					displayLine = rendered.lines[renderedIdx]
+				var visualLines []string
+				if isCursorLine || hasInlineMath {
+					visualLines = []string{m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr)}
+				} else if lineIdx >= rendered.contentStartIdx && rendered.lines[lineIdx] != nil && len(rendered.lines[lineIdx]) > 0 {
+					visualLines = rendered.lines[lineIdx]
 				} else {
-					// Show raw text with inline math placeholders
-					displayLine = m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr)
+					visualLines = []string{lineStr}
+				}
+				if len(visualLines) == 0 {
+					visualLines = []string{""}
 				}
 
-				lineNum := globalLineIdx + 1
-				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
+				visualLineMap[blockIdx][lineIdx] = len(visualLines)
 
-				var styledGutter string
-				if isBlockActive && lineIdx == m.Editor.Cursor.LineIdx {
-					styledGutter = currentLineStyle.Render(lineNumStr)
-				} else {
-					styledGutter = gutterStyle.Render(lineNumStr)
+				for vIdx, vLine := range visualLines {
+					lineNum := globalLineIdx + 1
+					lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
+
+					var styledGutter string
+					if vIdx == 0 {
+						if isBlockActive && lineIdx == m.Editor.Cursor.LineIdx {
+							styledGutter = currentLineStyle.Render(lineNumStr)
+						} else {
+							styledGutter = gutterStyle.Render(lineNumStr)
+						}
+					} else {
+						styledGutter = gutterStyle.Render(strings.Repeat(" ", gutterWidth+2))
+					}
+					contentBuilder.WriteString(indicator)
+					contentBuilder.WriteString(styledGutter)
+					contentBuilder.WriteString(vLine)
+					contentBuilder.WriteString("\n")
+					globalLineIdx++
 				}
-				contentBuilder.WriteString(indicator)
-				contentBuilder.WriteString(styledGutter)
-				contentBuilder.WriteString(displayLine)
-				contentBuilder.WriteString("\n")
-				globalLineIdx++
 			}
 		} else {
 			visualLineMap[blockIdx] = make([]int, height)
