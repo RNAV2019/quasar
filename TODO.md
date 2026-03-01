@@ -4,10 +4,13 @@
 - [X] Generalize math syntax to work for multiline expressions
 - [X] Add inline math ability
 - [ ] When using D to delete it should wrap next line to cursor
-- [ ] Implement syntax highlighting for markdown
 - [ ] Ensure all/most markdown features work and pretty print
-- [ ] Optimize redraws of the image
+- [X] Optimize redraws of the image
+- [X] Implement syntax highlighting for markdown
 - [ ] Improve statusline
-- [ ] Add command bar
-- [ ] Add frontmatter support
+- [ ] Add command bar like lazyvim
+- [X] Add frontmatter support
+- [ ] Implement save/opening of md files
+- [ ] Add file browser on left side for notes
+- [ ] Create folder hierachy based off of tags
 - [ ] Implement gw

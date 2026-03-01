@@ -8,13 +8,14 @@ const (
 )
 
 type Block struct {
-	Type        BlockType
-	Lines       []string
-	ImageID     uint32
-	ImageCols   int
-	ImageHeight int
-	IsDirty     bool
-	HasError    bool
+	Type         BlockType
+	Lines        []string
+	ImageID      uint32
+	ImageCols    int
+	ImageHeight  int
+	IsDirty      bool
+	HasError     bool
+	ErrorMessage string
 }
 
 // Represents a coordinate in the text editor by way of row and column
@@ -117,6 +118,14 @@ func (m *Model) ViewLines() []string {
 func (m *Model) InsertChar(r rune) {
 	block := &m.Blocks[m.Cursor.BlockIdx]
 	block.HasError = false // Reset error state on edit
+
+	if block.Type == MathBlock {
+		isDelimiterLine := (m.Cursor.LineIdx == 0 || m.Cursor.LineIdx == len(block.Lines)-1) && block.Lines[m.Cursor.LineIdx] == "$$"
+		if isDelimiterLine {
+			return
+		}
+	}
+
 	line := &block.Lines[m.Cursor.LineIdx]
 
 	if r == '$' && block.Type == TextBlock {
@@ -323,8 +332,10 @@ func (m *Model) InsertNewLine() {
 	block := &m.Blocks[m.Cursor.BlockIdx]
 
 	if block.Type == MathBlock {
-		isLastLine := m.Cursor.LineIdx == len(block.Lines)-1
 		lineContent := block.Lines[m.Cursor.LineIdx]
+		isFirstLine := m.Cursor.LineIdx == 0
+		isLastLine := m.Cursor.LineIdx == len(block.Lines)-1
+
 		if isLastLine && lineContent == "$$" {
 			newTextBlock := Block{Type: TextBlock, Lines: []string{""}}
 
@@ -337,6 +348,15 @@ func (m *Model) InsertNewLine() {
 
 			m.Cursor.BlockIdx = insertIndex
 			m.Cursor.LineIdx = 0
+			m.Cursor.Col = 0
+			return
+		}
+
+		if isFirstLine && lineContent == "$$" {
+			block.Lines = append(block.Lines[:1], append([]string{""}, block.Lines[1:]...)...)
+			block.IsDirty = true
+			block.HasError = false
+			m.Cursor.LineIdx = 1
 			m.Cursor.Col = 0
 			return
 		}

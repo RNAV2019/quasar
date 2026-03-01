@@ -2,13 +2,15 @@ module github.com/RNAV2019/quasar
 
 go 1.26
 
-require charm.land/lipgloss/v2 v2.0.0
+require (
+	charm.land/lipgloss/v2 v2.0.0
+	github.com/blacktop/go-termimg v0.1.26
+)
 
 require (
 	github.com/alecthomas/chroma/v2 v2.23.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
-	github.com/blacktop/go-termimg v0.1.26 // indirect
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
@@ -34,6 +36,7 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
 require (

@@ -18,6 +18,7 @@ const (
 	Normal Mode = iota
 	Insert
 	Select
+	Command
 )
 
 type Model struct {
@@ -30,6 +31,8 @@ type Model struct {
 	InlineRenders  map[string]InlineMathRender
 	PendingRenders int
 	CompiledMath   []string
+	CommandBuffer  string
+	StatusMessage  string
 }
 
 type TickMsg time.Time
@@ -62,40 +65,6 @@ type InlineMathRender struct {
 }
 
 var inlineMathRe = regexp.MustCompile(`\$[^\$]*\$`)
-
-func (m *Model) currentMathPaths() map[string]bool {
-	paths := make(map[string]bool)
-	for _, block := range m.Editor.Blocks {
-		switch block.Type {
-		case editor.MathBlock:
-			lines := block.Lines
-			if len(lines) >= 2 && lines[0] == "$$" && lines[len(lines)-1] == "$$" {
-				lines = lines[1 : len(lines)-1]
-			}
-			start := 0
-			for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
-				start++
-			}
-			content := strings.Join(lines[start:], "\n")
-			if content != "" {
-				path := latex.PNGPath(content, m.Config.CacheDir, false)
-				paths[path] = true
-			}
-		case editor.TextBlock:
-			for _, line := range block.Lines {
-				matches := inlineMathRe.FindAllStringIndex(line, -1)
-				for _, match := range matches {
-					content := line[match[0]+1 : match[1]-1]
-					if content != "" {
-						path := latex.PNGPath(content, m.Config.CacheDir, true)
-						paths[path] = true
-					}
-				}
-			}
-		}
-	}
-	return paths
-}
 
 func doTick() tea.Cmd {
 	return tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
@@ -132,6 +101,12 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 					start++
 				}
 				content := strings.Join(contentLines[start:], "\n")
+				if strings.TrimSpace(content) == "" {
+					return BlockProcessedMsg{
+						BlockIdx: blockIdx, ImageID: 0, ImageCols: 0,
+						ImageHeight: 0, Error: nil, Source: "",
+					}
+				}
 				path, err := latex.CompileToPNG(content, m.Config.CacheDir, false)
 				var info latex.ImageInfo
 				if err == nil {
@@ -198,6 +173,25 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// executeCommand handles command mode commands
+func (m *Model) executeCommand() error {
+	cmd := strings.TrimSpace(m.CommandBuffer)
+	
+	switch cmd {
+	case "w", "write":
+		if err := m.Editor.SaveToFile(m.Config.NotesDir); err != nil {
+			return err
+		}
+		m.StatusMessage = "File saved successfully"
+		return nil
+	case "q", "quit":
+		// TODO: Add quit functionality if needed
+		return fmt.Errorf("quit not implemented")
+	default:
+		return fmt.Errorf("unknown command: %s", cmd)
+	}
+}
+
 func InitialModel(cfg *config.Config) Model {
 	return Model{
 		mode:          Normal,
@@ -248,6 +242,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		} else if m.mode == Command {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.mode = Normal
+				m.CommandBuffer = ""
+				m.StatusMessage = ""
+			case "enter":
+				if err := m.executeCommand(); err != nil {
+					m.StatusMessage = fmt.Sprintf("Error: %v", err)
+				}
+				m.mode = Normal
+				m.CommandBuffer = ""
+			case "backspace":
+				if len(m.CommandBuffer) > 0 {
+					m.CommandBuffer = m.CommandBuffer[:len(m.CommandBuffer)-1]
+				}
+			default:
+				if msg.Text != "" {
+					m.CommandBuffer += msg.Text
+				}
+			}
 		} else {
 			switch msg.String() {
 			case "q", "ctrl+c":
@@ -268,6 +283,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Editor.EndOfLine()
 				m.Editor.InsertNewLine()
 				m.mode = Insert
+			case ":":
+				m.mode = Command
+				m.CommandBuffer = ""
+				m.StatusMessage = ""
 			}
 		}
 
@@ -275,8 +294,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cursorMoved := oldCursor != m.Editor.Cursor
 
 		if modeChanged || m.mode == Insert {
-			m.Editor.Blocks[m.Editor.Cursor.BlockIdx].IsDirty = true
-			if oldCursor.BlockIdx != m.Editor.Cursor.BlockIdx {
+			if m.Editor.Cursor.BlockIdx < len(m.Editor.Blocks) {
+				m.Editor.Blocks[m.Editor.Cursor.BlockIdx].IsDirty = true
+			}
+			if oldCursor.BlockIdx != m.Editor.Cursor.BlockIdx && oldCursor.BlockIdx < len(m.Editor.Blocks) {
 				m.Editor.Blocks[oldCursor.BlockIdx].IsDirty = true
 			}
 		}
@@ -304,11 +325,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			block.ImageCols = msg.ImageCols
 			block.ImageHeight = msg.ImageHeight
 			block.HasError = msg.Error != nil
+			if msg.Error != nil {
+				block.ErrorMessage = msg.Error.Error()
+			} else {
+				block.ErrorMessage = ""
+			}
 		}
 
 	case InlineMathProcessedMsg:
 		m.PendingRenders--
-		if msg.Error == nil {
+		if msg.Error == nil && msg.BlockIdx < len(m.Editor.Blocks) {
 			key := fmt.Sprintf("%d-%d-%d", msg.BlockIdx, msg.LineIdx, msg.StartCol)
 			m.InlineRenders[key] = InlineMathRender{
 				ImageID:     msg.ImageID,
@@ -320,21 +346,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TickMsg:
 		m.Time = time.Time(msg)
-		isIdle := true
 		if m.PendingRenders == 0 {
 			for _, b := range m.Editor.Blocks {
 				if b.IsDirty {
 					cmds = append(cmds, m.processDirtyBlocks())
-					isIdle = false
 					break
 				}
 			}
-		} else {
-			isIdle = false
-		}
-		if isIdle {
-			currentPaths := m.currentMathPaths()
-			latex.CleanupUnusedPNGs(m.Config.CacheDir, currentPaths)
 		}
 		return m, tea.Batch(doTick(), tea.Batch(cmds...))
 	}

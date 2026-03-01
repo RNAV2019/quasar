@@ -25,33 +25,20 @@ func getCompileLock(hash string) *sync.Mutex {
 	return compileLocks[hash]
 }
 
-// PNGPath returns the path where the PNG for the given math content would be cached.
-func PNGPath(math string, cacheDir string, isInline bool) string {
+func sanitizeMath(math string) string {
 	processedMath := strings.TrimSpace(math)
+	lines := strings.Split(processedMath, "\n")
+	var filtered []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			filtered = append(filtered, l)
+		}
+	}
+	processedMath = strings.Join(filtered, "\n")
 	if !isMathEnvironment(processedMath) {
 		processedMath = fmt.Sprintf("\\begin{gather*}%s\\end{gather*}", processedMath)
 	}
-	hash := sha256.Sum256([]byte(processedMath + fmt.Sprintf("%v", isInline)))
-	hashStr := hex.EncodeToString(hash[:])
-	return filepath.Join(cacheDir, hashStr+".png")
-}
-
-// CleanupUnusedPNGs removes PNG files that are no longer referenced by any current math content.
-func CleanupUnusedPNGs(cacheDir string, currentMathPaths map[string]bool) error {
-	entries, err := os.ReadDir(cacheDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".png") {
-			continue
-		}
-		path := filepath.Join(cacheDir, entry.Name())
-		if !currentMathPaths[path] {
-			os.Remove(path)
-		}
-	}
-	return nil
+	return processedMath
 }
 
 // isMathEnvironment checks if a string starts with a LaTeX environment that provides its own math mode.
@@ -67,12 +54,7 @@ func isMathEnvironment(s string) bool {
 }
 
 func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
-	// Ensure the content is wrapped in a proper math environment if it isn't already.
-	processedMath := strings.TrimSpace(math)
-	if !isMathEnvironment(processedMath) {
-		// Use gather* for centered, unnumbered display math. It's more stable than $$.
-		processedMath = fmt.Sprintf("\\begin{gather*}%s\\end{gather*}", processedMath)
-	}
+	processedMath := sanitizeMath(math)
 
 	hash := sha256.Sum256([]byte(processedMath + fmt.Sprintf("%v", isInline)))
 	hashStr := hex.EncodeToString(hash[:])
@@ -143,9 +125,22 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 		croppedPdfPath = pdfPath
 	}
 
-	convertCmd := exec.Command("magick", "-density", "2500", croppedPdfPath, "-background", "transparent", "-fill", "white", "-opaque", "black", pngPath)
+	tmpPngPath := filepath.Join(tmpDir, hashStr+".png")
+	convertCmd := exec.Command("magick", "-density", "2500", croppedPdfPath, "-background", "transparent", "-fill", "white", "-opaque", "black", tmpPngPath)
 	if output, err := convertCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("ImageMagick convert execution failed.\nError: %w\nOutput: %s", err, string(output))
+	}
+
+	if _, err := os.Stat(tmpPngPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("PNG file was not created at %s", tmpPngPath)
+	}
+
+	data, err := os.ReadFile(tmpPngPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read temporary PNG: %w", err)
+	}
+	if err := os.WriteFile(pngPath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write PNG to cache: %w", err)
 	}
 
 	return pngPath, nil
