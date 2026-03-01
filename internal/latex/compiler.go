@@ -45,7 +45,7 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 
 	margins := "10 10 10 10"
 	if isInline {
-		margins = "5 0 5 0"
+		margins = "0"
 	}
 
 	template := `\documentclass[preview,border=2pt]{standalone}

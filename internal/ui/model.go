@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -22,23 +21,23 @@ const (
 )
 
 type Model struct {
-	mode              Mode
-	width             int
-	height            int
-	Time              time.Time
-	Editor            editor.Model
-	Config            *config.Config
-	InlineRenders     map[string]InlineMathRender
-	PendingRenders    int
-	CompiledMath      []string
-	needsImageRedraw  bool
+	mode           Mode
+	width          int
+	height         int
+	Time           time.Time
+	Editor         editor.Model
+	Config         *config.Config
+	InlineRenders  map[string]InlineMathRender
+	PendingRenders int
+	CompiledMath   []string
 }
 
 type TickMsg time.Time
 
 type BlockProcessedMsg struct {
 	BlockIdx    int
-	Rendered    string
+	ImageID     uint32
+	ImageCols   int
 	ImageHeight int
 	Error       error
 	Source      string
@@ -49,108 +48,20 @@ type InlineMathProcessedMsg struct {
 	LineIdx     int
 	StartCol    int
 	EndCol      int
-	Rendered    string
+	ImageID     uint32
+	ImageCols   int
 	ImageHeight int
 	Error       error
 }
 
 type InlineMathRender struct {
-	Rendered    string
+	ImageID     uint32
+	ImageCols   int
 	ImageHeight int
 	Length      int
 }
 
 var inlineMathRe = regexp.MustCompile(`\$[^\$]*\$`)
-
-func (m *Model) cursorInBlock(blockIdx int) bool {
-	return m.Editor.Cursor.BlockIdx == blockIdx
-}
-
-func (m *Model) isBlockEditable(blockIdx int) bool {
-	return m.cursorInBlock(blockIdx) && m.mode == Insert
-}
-
-func (m *Model) shouldShowRawMathBlock(blockIdx int) bool {
-	return m.cursorInBlock(blockIdx)
-}
-
-func (m *Model) getHoveredMathIndex(blockIdx, lineIdx, col int) int {
-	if blockIdx >= len(m.Editor.Blocks) {
-		return -1
-	}
-	block := m.Editor.Blocks[blockIdx]
-	if block.Type != editor.TextBlock || lineIdx >= len(block.Lines) {
-		return -1
-	}
-	for i, match := range inlineMathRe.FindAllStringIndex(block.Lines[lineIdx], -1) {
-		if col >= match[0] && col < match[1] {
-			return i
-		}
-	}
-	return -1
-}
-
-func (m *Model) gutterWidth() int {
-	totalLines := 0
-	for _, block := range m.Editor.Blocks {
-		totalLines += len(block.Lines)
-	}
-	return len(fmt.Sprint(totalLines))
-}
-
-func redrawImages(m Model) tea.Cmd {
-	return func() tea.Msg {
-		var seq strings.Builder
-		seq.WriteString("\x1b_Ga=d,d=A;\x1b\\")
-
-		gutterWidth := m.gutterWidth()
-		currentY := 1
-
-		for blockIdx, block := range m.Editor.Blocks {
-			if m.shouldShowRawMathBlock(blockIdx) {
-				currentY += len(block.Lines)
-				continue
-			}
-			if block.Type == editor.MathBlock && block.Rendered != "" {
-				imageX := 2 + gutterWidth + 3 + 1
-				seq.WriteString("\033[s")
-				fmt.Fprintf(&seq, "\033[%d;%dH", currentY, imageX)
-				seq.WriteString(block.Rendered)
-				seq.WriteString("\033[u")
-			}
-			currentY += len(block.Lines)
-		}
-
-		for key, render := range m.InlineRenders {
-			var blockIdx, lineIdx, startCol int
-			fmt.Sscanf(key, "%d-%d-%d", &blockIdx, &lineIdx, &startCol)
-
-			if m.isBlockEditable(blockIdx) {
-				continue
-			}
-			if m.mode == Normal && m.cursorInBlock(blockIdx) && m.Editor.Cursor.LineIdx == lineIdx {
-				if m.Editor.Cursor.Col >= startCol && m.Editor.Cursor.Col < startCol+render.Length {
-					continue
-				}
-			}
-
-			imageY := 1
-			for i := 0; i < blockIdx; i++ {
-				imageY += len(m.Editor.Blocks[i].Lines)
-			}
-			imageY += lineIdx
-			imageX := 2 + gutterWidth + 3 + startCol + 1
-
-			seq.WriteString("\033[s")
-			fmt.Fprintf(&seq, "\033[%d;%dH", imageY, imageX)
-			seq.WriteString(render.Rendered)
-			seq.WriteString("\033[u")
-		}
-
-		os.Stdout.WriteString(seq.String())
-		return nil
-	}
-}
 
 func doTick() tea.Cmd {
 	return tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
@@ -173,8 +84,12 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 			}
 			block.IsDirty = false
 			m.PendingRenders++
+			blockIdx := i
+			lines := make([]string, len(block.Lines))
+			copy(lines, block.Lines)
+			numLines := len(block.Lines)
 			cmds = append(cmds, func() tea.Msg {
-				contentLines := block.Lines
+				contentLines := lines
 				if len(contentLines) >= 2 && contentLines[0] == "$$" && contentLines[len(contentLines)-1] == "$$" {
 					contentLines = contentLines[1 : len(contentLines)-1]
 				}
@@ -184,13 +99,13 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 				}
 				content := strings.Join(contentLines[start:], "\n")
 				path, err := latex.CompileToPNG(content, m.Config.CacheDir, false)
-				var rendered string
-				var height int
+				var info latex.ImageInfo
 				if err == nil {
-					rendered, height, _ = latex.EncodeImageForKitty(path, len(block.Lines))
+					info, err = latex.TransmitImageForKitty(path, numLines, 0)
 				}
 				return BlockProcessedMsg{
-					BlockIdx: i, Rendered: rendered, ImageHeight: height, Error: err, Source: content,
+					BlockIdx: blockIdx, ImageID: info.ImageID, ImageCols: info.Cols,
+					ImageHeight: info.Rows, Error: err, Source: content,
 				}
 			})
 
@@ -211,26 +126,31 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 				}
 
 				prefix := fmt.Sprintf("%d-%d-", i, lineIdx)
-				for key := range m.InlineRenders {
+				for key, render := range m.InlineRenders {
 					if strings.HasPrefix(key, prefix) {
+						if render.ImageID != 0 {
+							latex.DeleteImage(render.ImageID)
+						}
 						delete(m.InlineRenders, key)
 					}
 				}
 
 				for _, match := range matches {
 					m.PendingRenders++
+					blockIdx := i
+					lIdx := lineIdx
 					start, end := match[0], match[1]
 					content := line[start+1 : end-1]
 					cmds = append(cmds, func() tea.Msg {
 						path, err := latex.CompileToPNG(content, m.Config.CacheDir, true)
-						var rendered string
-						var height int
+						var info latex.ImageInfo
 						if err == nil {
-							rendered, height, _ = latex.EncodeImageForKitty(path, 1)
+							info, err = latex.TransmitImageForKitty(path, 1, end-start)
 						}
 						return InlineMathProcessedMsg{
-							BlockIdx: i, LineIdx: lineIdx, StartCol: start, EndCol: end,
-							Rendered: rendered, ImageHeight: height, Error: err,
+							BlockIdx: blockIdx, LineIdx: lIdx, StartCol: start, EndCol: end,
+							ImageID: info.ImageID, ImageCols: info.Cols,
+							ImageHeight: info.Rows, Error: err,
 						}
 					})
 					anyProcessed = true
@@ -265,7 +185,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		oldCursor := m.Editor.Cursor
 		oldMode := m.mode
-		contentChanged := false
 
 		if m.mode == Insert {
 			switch msg.String() {
@@ -309,7 +228,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Editor.MoveCursor(0, 1)
 			case "d":
 				m.Editor.DeleteChar()
-				contentChanged = true
 			case "i":
 				m.mode = Insert
 			case "o":
@@ -319,50 +237,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		cursorMoved := oldCursor != m.Editor.Cursor
 		modeChanged := oldMode != m.mode
-		if !cursorMoved && !modeChanged && !contentChanged {
-			break
-		}
+		cursorMoved := oldCursor != m.Editor.Cursor
 
 		if modeChanged || m.mode == Insert {
 			m.Editor.Blocks[m.Editor.Cursor.BlockIdx].IsDirty = true
 			if oldCursor.BlockIdx != m.Editor.Cursor.BlockIdx {
 				m.Editor.Blocks[oldCursor.BlockIdx].IsDirty = true
 			}
-			cmds = append(cmds, redrawImages(m))
-		} else if m.mode == Normal {
-			needsRedraw := false
+		}
 
-			if contentChanged {
-				cmds = append(cmds, m.processDirtyBlocks())
-				needsRedraw = true
-			}
-
-			if oldCursor.BlockIdx != m.Editor.Cursor.BlockIdx {
-				oldBlock := m.Editor.Blocks[oldCursor.BlockIdx]
-				newBlock := m.Editor.Blocks[m.Editor.Cursor.BlockIdx]
-				if oldBlock.Type == editor.MathBlock || newBlock.Type == editor.MathBlock {
-					needsRedraw = true
-				}
-			}
-
-			oldHover := m.getHoveredMathIndex(oldCursor.BlockIdx, oldCursor.LineIdx, oldCursor.Col)
-			newHover := m.getHoveredMathIndex(m.Editor.Cursor.BlockIdx, m.Editor.Cursor.LineIdx, m.Editor.Cursor.Col)
-			if oldHover != newHover {
-				needsRedraw = true
-			}
-
-			if needsRedraw {
-				cmds = append(cmds, redrawImages(m))
-			}
+		if modeChanged && !cursorMoved {
+			cmds = append(cmds, m.processDirtyBlocks())
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.Editor.SetSize(m.width, m.height-1)
-		cmds = append(cmds, redrawImages(m))
 
 	case BlockProcessedMsg:
 		m.PendingRenders--
@@ -371,12 +263,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.BlockIdx < len(m.Editor.Blocks) {
 			block := &m.Editor.Blocks[msg.BlockIdx]
-			block.Rendered = msg.Rendered
+			if block.ImageID != 0 && block.ImageID != msg.ImageID {
+				latex.DeleteImage(block.ImageID)
+			}
+			block.ImageID = msg.ImageID
+			block.ImageCols = msg.ImageCols
 			block.ImageHeight = msg.ImageHeight
 			block.HasError = msg.Error != nil
-		}
-		if m.PendingRenders == 0 {
-			m.needsImageRedraw = true
 		}
 
 	case InlineMathProcessedMsg:
@@ -384,13 +277,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Error == nil {
 			key := fmt.Sprintf("%d-%d-%d", msg.BlockIdx, msg.LineIdx, msg.StartCol)
 			m.InlineRenders[key] = InlineMathRender{
-				Rendered:    msg.Rendered,
+				ImageID:     msg.ImageID,
+				ImageCols:   msg.ImageCols,
 				ImageHeight: msg.ImageHeight,
 				Length:      msg.EndCol - msg.StartCol,
 			}
-		}
-		if m.PendingRenders == 0 {
-			m.needsImageRedraw = true
 		}
 
 	case TickMsg:
@@ -401,10 +292,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, m.processDirtyBlocks())
 					break
 				}
-			}
-			if m.needsImageRedraw {
-				m.needsImageRedraw = false
-				cmds = append(cmds, redrawImages(m))
 			}
 		}
 		return m, tea.Batch(doTick(), tea.Batch(cmds...))

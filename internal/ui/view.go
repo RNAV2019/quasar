@@ -2,18 +2,20 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/RNAV2019/quasar/internal/editor"
+	"github.com/RNAV2019/quasar/internal/latex"
 	"github.com/charmbracelet/glamour"
 )
 
 var (
 	modeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FFF")).
-			Background(lipgloss.Color("#FF5F87")). // Pink
+			Background(lipgloss.Color("#FF5F87")).
 			Padding(0, 1)
 
 	clearStyle = lipgloss.NewStyle()
@@ -22,10 +24,9 @@ var (
 	currentLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
 	markdownRender   *glamour.TermRenderer
 
-	// Gutter indicators
-	mathGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")  // Blue
-	textGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("│") // Gray
-	errorGutterIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│") // Red
+	mathGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")
+	textGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("│")
+	errorGutterIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
 )
 
 var modeName = map[Mode]string{
@@ -53,7 +54,7 @@ func (m Model) View() tea.View {
 
 	renderedLeft := modeStyle.Render(modeName[m.mode])
 	renderedCenter := clearStyle.Render("[FILENAME]")
-	renderedRight := modeStyle.Render(" " + m.Time.Format("15:04"))
+	renderedRight := modeStyle.Render(" " + m.Time.Format("15:04"))
 
 	wLeft := lipgloss.Width(renderedLeft)
 	wCenter := lipgloss.Width(renderedCenter)
@@ -95,58 +96,31 @@ func (m Model) View() tea.View {
 			indicator = textGutterIndicator
 		}
 
-		// For all blocks, active or inactive, rendered or not, we reserve space equal to the number of raw text lines.
-		// This ensures the layout is always stable.
 		height := len(block.Lines)
 
-		if !isBlockActive && block.Type == editor.MathBlock && block.Rendered != "" {
-			// Inactive, rendered math block. We draw empty lines to hold space for the image overlay.
-			// The image will be drawn over this space. If the image is taller, it may be clipped.
-			for i := 0; i < height; i++ {
+		if !isBlockActive && block.Type == editor.MathBlock && block.ImageID != 0 {
+			for i := range height {
 				lineNum := globalLineIdx + 1 + i
 				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 				contentBuilder.WriteString(indicator)
 				contentBuilder.WriteString(gutterStyle.Render(lineNumStr))
+				contentBuilder.WriteString(latex.PlaceholderRow(block.ImageID, uint16(i), block.ImageCols))
 				contentBuilder.WriteString("\n")
 			}
+			globalLineIdx += height
 		} else {
-			// Active block or a text block. Render raw text.
 			for lineIdx, lineStr := range block.Lines {
-				// Blank out if needed
-				shouldBlank := true
-				if m.mode == Insert && isBlockActive {
-					shouldBlank = false
-				}
-				
-				if shouldBlank {
-					runes := []rune(lineStr)
-					for key, render := range m.InlineRenders {
-						var bIdx, lIdx, startCol int
-						fmt.Sscanf(key, "%d-%d-%d", &bIdx, &lIdx, &startCol)
-						if bIdx == blockIdx && lIdx == lineIdx {
-							// In Normal mode, if we are hovering this expression, don't blank it (show raw)
-							isHovered := m.mode == Normal && isBlockActive && lineIdx == m.Editor.Cursor.LineIdx &&
-								m.Editor.Cursor.Col >= startCol && m.Editor.Cursor.Col < startCol+render.Length
+				shouldBlank := !(m.mode == Insert && isBlockActive)
 
-							if !isHovered {
-								// Blank out the content
-								for i := startCol; i < startCol+render.Length; i++ {
-									if i < len(runes) {
-										runes[i] = ' '
-									}
-								}
-							}
-						}
-					}
-					lineStr = string(runes)
+				if shouldBlank && block.Type == editor.TextBlock {
+					lineStr = m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr)
 				}
 
 				lineNum := globalLineIdx + 1
 				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 
 				var styledGutter string
-				isCursorLine := isBlockActive && lineIdx == m.Editor.Cursor.LineIdx
-				if isCursorLine {
+				if isBlockActive && lineIdx == m.Editor.Cursor.LineIdx {
 					styledGutter = currentLineStyle.Render(lineNumStr)
 				} else {
 					styledGutter = gutterStyle.Render(lineNumStr)
@@ -158,11 +132,6 @@ func (m Model) View() tea.View {
 				globalLineIdx++
 			}
 		}
-		// Always advance the logical line index by the number of lines in the source.
-		// The loop for rendered blocks does not increment globalLineIdx, so we do it here.
-		if !isBlockActive && block.Type == editor.MathBlock && block.Rendered != "" {
-			globalLineIdx += len(block.Lines)
-		}
 	}
 
 	renderContentHeight := max(m.height-lipgloss.Height(statusLine), 0)
@@ -173,12 +142,10 @@ func (m Model) View() tea.View {
 
 	view := lipgloss.JoinVertical(lipgloss.Top, renderContent, statusLine)
 
-	// Move terminal cursor to the correct position.
 	cursorX := 2 + gutterWidth + 3 + m.Editor.Cursor.Col
 
 	cursorY := 0
 	for i := 0; i < m.Editor.Cursor.BlockIdx; i++ {
-		// The height of every block is its line count, ensuring a stable layout.
 		cursorY += len(m.Editor.Blocks[i].Lines)
 	}
 	cursorY += m.Editor.Cursor.LineIdx
@@ -203,4 +170,63 @@ func (m Model) View() tea.View {
 	v.AltScreen = true
 	v.Cursor = &cursorConfig
 	return v
+}
+
+func (m Model) applyInlinePlaceholders(blockIdx, lineIdx int, lineStr string) string {
+	type inlineMatch struct {
+		startCol int
+		render   InlineMathRender
+		hovered  bool
+	}
+
+	var matches []inlineMatch
+	isBlockActive := blockIdx == m.Editor.Cursor.BlockIdx
+
+	for key, render := range m.InlineRenders {
+		var bIdx, lIdx, startCol int
+		fmt.Sscanf(key, "%d-%d-%d", &bIdx, &lIdx, &startCol)
+		if bIdx != blockIdx || lIdx != lineIdx {
+			continue
+		}
+
+		hovered := m.mode == Normal && isBlockActive && lineIdx == m.Editor.Cursor.LineIdx &&
+			m.Editor.Cursor.Col >= startCol && m.Editor.Cursor.Col < startCol+render.Length
+
+		matches = append(matches, inlineMatch{startCol: startCol, render: render, hovered: hovered})
+	}
+
+	if len(matches) == 0 {
+		return lineStr
+	}
+
+	slices.SortFunc(matches, func(a, b inlineMatch) int {
+		return a.startCol - b.startCol
+	})
+
+	runes := []rune(lineStr)
+	var result strings.Builder
+	pos := 0
+
+	for _, match := range matches {
+		if match.startCol > pos {
+			result.WriteString(string(runes[pos:match.startCol]))
+		}
+
+		if match.hovered {
+			end := match.startCol + match.render.Length
+			if end > len(runes) {
+				end = len(runes)
+			}
+			result.WriteString(string(runes[match.startCol:end]))
+		} else {
+			result.WriteString(latex.PlaceholderRow(match.render.ImageID, 0, match.render.Length))
+		}
+		pos = match.startCol + match.render.Length
+	}
+
+	if pos < len(runes) {
+		result.WriteString(string(runes[pos:]))
+	}
+
+	return result.String()
 }

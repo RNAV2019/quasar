@@ -7,14 +7,14 @@ const (
 	MathBlock
 )
 
-// A Block represents a distinct structural element in the document
 type Block struct {
 	Type        BlockType
-	Lines       []string // The raw text content of the block
-	Rendered    string   // The Kitty graphics string (if applicable)
-	ImageHeight int      // Height of the rendered image in terminal cells
-	IsDirty     bool     // Needs re-rendering/re-compilation
-	HasError    bool     // Whether the block has a compilation error
+	Lines       []string
+	ImageID     uint32
+	ImageCols   int
+	ImageHeight int
+	IsDirty     bool
+	HasError    bool
 }
 
 // Represents a coordinate in the text editor by way of row and column
