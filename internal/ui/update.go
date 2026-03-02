@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/RNAV2019/quasar/internal/config"
 	"github.com/RNAV2019/quasar/internal/editor"
@@ -31,9 +32,12 @@ type Model struct {
 	InlineRenders  map[string]InlineMathRender
 	PendingRenders int
 	CompiledMath   []string
-	CommandBuffer  string
+	CmdInput       textinput.Model
 	StatusMessage  string
 	ParsedDoc      *editor.Document // Parsed document structure
+	FileTree       *FileTree
+	ShowFileTree   bool
+	pendingSpace   bool // Track if space was pressed (for space+key combos)
 }
 
 type TickMsg time.Time
@@ -179,32 +183,71 @@ func (m *Model) updateParsedDoc() {
 	m.ParsedDoc = editor.ParseDocument(m.Editor.Blocks)
 }
 
+// updateEditorSize adjusts the editor size based on file tree visibility
+func (m *Model) updateEditorSize() {
+	widthAdjust := 0
+	if m.ShowFileTree {
+		widthAdjust = m.FileTree.Width + 1
+	}
+	m.Editor.SetSize(m.width-widthAdjust, m.height-1)
+}
+
+// loadFile loads a file into the editor
+func (m *Model) loadFile(path string) error {
+	model, err := editor.LoadFromFile(path)
+	if err != nil {
+		return err
+	}
+	m.Editor = *model
+	m.ParsedDoc = editor.ParseDocument(m.Editor.Blocks)
+	// Mark all blocks as dirty to trigger math compilation
+	for i := range m.Editor.Blocks {
+		m.Editor.Blocks[i].IsDirty = true
+	}
+	// Update editor size to account for file tree
+	m.updateEditorSize()
+	return nil
+}
+
 // executeCommand handles command mode commands
-func (m *Model) executeCommand() error {
-	cmd := strings.TrimSpace(m.CommandBuffer)
+// Returns true if the application should quit
+func (m *Model) executeCommand() bool {
+	cmd := strings.TrimSpace(m.CmdInput.Value())
+	cmd = strings.TrimPrefix(cmd, ":")
+	cmd = strings.TrimSpace(cmd)
 
 	switch cmd {
 	case "w", "write":
 		if err := m.Editor.SaveToFile(m.Config.NotesDir); err != nil {
-			return err
+			m.StatusMessage = fmt.Sprintf("Error: %v", err)
+			return false
 		}
 		m.StatusMessage = "File saved successfully"
-		return nil
+		return false
 	case "q", "quit":
-		// TODO: Add quit functionality if needed
-		return fmt.Errorf("quit not implemented")
+		return true
 	default:
-		return fmt.Errorf("unknown command: %s", cmd)
+		m.StatusMessage = fmt.Sprintf("unknown command: %s", cmd)
+		return false
 	}
 }
 
 func InitialModel(cfg *config.Config) Model {
+	ti := textinput.New()
+	ti.Prompt = "> "
+	ti.Placeholder = ""
+	ti.SetVirtualCursor(false)
+	ti.CharLimit = 30
+
 	m := Model{
 		mode:          Normal,
 		Time:          time.Now(),
 		Editor:        editor.NewModel(),
 		Config:        cfg,
 		InlineRenders: make(map[string]InlineMathRender),
+		CmdInput:      ti,
+		FileTree:      NewFileTree(cfg.NotesDir),
+		ShowFileTree:  false,
 	}
 	// Initialize parsed document
 	m.ParsedDoc = editor.ParseDocument(m.Editor.Blocks)
@@ -225,8 +268,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.mode == Insert {
 			switch msg.String() {
-			case "ctrl+c":
-				return m, tea.Quit
 			case "left":
 				m.Editor.MoveCursor(0, -1)
 			case "down":
@@ -257,47 +298,95 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.mode = Normal
-				m.CommandBuffer = ""
+				m.CmdInput.SetValue("")
+				m.CmdInput.Blur()
 				m.StatusMessage = ""
 			case "enter":
-				if err := m.executeCommand(); err != nil {
-					m.StatusMessage = fmt.Sprintf("Error: %v", err)
+				if m.executeCommand() {
+					return m, tea.Quit
 				}
 				m.mode = Normal
-				m.CommandBuffer = ""
-			case "backspace":
-				if len(m.CommandBuffer) > 0 {
-					m.CommandBuffer = m.CommandBuffer[:len(m.CommandBuffer)-1]
-				}
+				m.CmdInput.SetValue("")
+				m.CmdInput.Blur()
 			default:
-				if msg.Text != "" {
-					m.CommandBuffer += msg.Text
-				}
+				var cmd tea.Cmd
+				m.CmdInput, cmd = m.CmdInput.Update(msg)
+				cmds = append(cmds, cmd)
 			}
 		} else {
-			switch msg.String() {
-			case "q", "ctrl+c":
-				return m, tea.Quit
-			case "h", "left":
-				m.Editor.MoveCursor(0, -1)
-			case "j", "down":
-				m.Editor.MoveCursor(1, 0)
-			case "k", "up":
-				m.Editor.MoveCursor(-1, 0)
-			case "l", "right":
-				m.Editor.MoveCursor(0, 1)
-			case "d":
-				m.Editor.DeleteChar()
-			case "i":
-				m.mode = Insert
-			case "o":
-				m.Editor.EndOfLine()
-				m.Editor.InsertNewLine()
-				m.mode = Insert
-			case ":":
-				m.mode = Command
-				m.CommandBuffer = ""
-				m.StatusMessage = ""
+			// Handle space+key combinations first (works regardless of file tree focus)
+			if m.pendingSpace {
+				m.pendingSpace = false
+				switch msg.String() {
+				case "f":
+					m.ShowFileTree = !m.ShowFileTree
+					if m.ShowFileTree {
+						m.FileTree.Refresh()
+						m.FileTree.Focused = true
+					} else {
+						m.FileTree.Focused = false
+					}
+					m.updateEditorSize()
+				case "/":
+					if m.ShowFileTree {
+						m.FileTree.Focused = !m.FileTree.Focused
+					}
+				}
+			} else if m.ShowFileTree && m.FileTree.Focused {
+				// Handle file tree navigation when focused
+				switch msg.String() {
+				case "j", "down":
+					m.FileTree.MoveDown()
+				case "k", "up":
+					m.FileTree.MoveUp()
+				case "enter":
+					if m.FileTree.IsSelectedDir() {
+						m.FileTree.ToggleExpand()
+					} else {
+						// Load file and close file tree
+						path := m.FileTree.GetSelectedPath()
+						if path != "" {
+							if err := m.loadFile(path); err != nil {
+								m.StatusMessage = fmt.Sprintf("Error: %v", err)
+							} else {
+								m.FileTree.Focused = false
+								m.ShowFileTree = false
+								m.updateEditorSize()
+								m.StatusMessage = ""
+								cmds = append(cmds, m.processDirtyBlocks())
+							}
+						}
+					}
+				case "esc":
+					m.FileTree.Focused = false
+				case "space":
+					m.pendingSpace = true
+				}
+			} else {
+				switch msg.String() {
+				case "h", "left":
+					m.Editor.MoveCursor(0, -1)
+				case "j", "down":
+					m.Editor.MoveCursor(1, 0)
+				case "k", "up":
+					m.Editor.MoveCursor(-1, 0)
+				case "l", "right":
+					m.Editor.MoveCursor(0, 1)
+				case "d":
+					m.Editor.DeleteChar()
+				case "i":
+					m.mode = Insert
+				case "o":
+					m.Editor.EndOfLine()
+					m.Editor.InsertNewLine()
+					m.mode = Insert
+				case ":":
+					m.mode = Command
+					m.CmdInput.SetValue("")
+					cmds = append(cmds, m.CmdInput.Focus())
+				case "space":
+					m.pendingSpace = true
+				}
 			}
 		}
 
@@ -320,7 +409,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.Editor.SetSize(m.width, m.height-1)
+		m.updateEditorSize()
 
 	case BlockProcessedMsg:
 		m.PendingRenders--

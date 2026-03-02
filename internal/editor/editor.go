@@ -1,5 +1,7 @@
 package editor
 
+import "strconv"
+
 type BlockType int
 
 const (
@@ -108,7 +110,70 @@ func (m *Model) EndOfLine() {
 }
 
 func (m *Model) ensureCursorInView() {
-	// Simplified for now: does nothing
+	// Don't scroll if height not properly set yet
+	if m.Height <= 0 {
+		return
+	}
+
+	// Calculate total lines
+	totalLines := 0
+	for _, block := range m.Blocks {
+		totalLines += len(block.Lines)
+	}
+
+	// Reset horizontal offset (no horizontal scrolling)
+	m.Offset.Col = 0
+
+	// Vertical scrolling: only scroll when cursor reaches bottom of viewport
+	viewHeight := m.Height
+
+	// If content fits entirely in viewport, reset offset to top
+	if totalLines <= viewHeight {
+		m.Offset.BlockIdx = 0
+		m.Offset.LineIdx = 0
+		return
+	}
+
+	// Calculate absolute line number for cursor
+	cursorAbsLine := 0
+	for i := 0; i < m.Cursor.BlockIdx && i < len(m.Blocks); i++ {
+		cursorAbsLine += len(m.Blocks[i].Lines)
+	}
+	cursorAbsLine += m.Cursor.LineIdx
+
+	// Calculate absolute line number for offset
+	offsetAbsLine := 0
+	for i := 0; i < m.Offset.BlockIdx && i < len(m.Blocks); i++ {
+		offsetAbsLine += len(m.Blocks[i].Lines)
+	}
+	offsetAbsLine += m.Offset.LineIdx
+
+	// Scroll up if cursor is above viewport
+	if cursorAbsLine < offsetAbsLine {
+		m.Offset.BlockIdx = m.Cursor.BlockIdx
+		m.Offset.LineIdx = m.Cursor.LineIdx
+	}
+	// Scroll down only when cursor reaches/passes the bottom of viewport
+	if cursorAbsLine >= offsetAbsLine+viewHeight {
+		// Find new offset to place cursor at bottom
+		targetAbsLine := cursorAbsLine - viewHeight + 1
+		m.Offset.BlockIdx = 0
+		m.Offset.LineIdx = 0
+		currentLine := 0
+		for i := range m.Blocks {
+			for j := range m.Blocks[i].Lines {
+				if currentLine >= targetAbsLine {
+					m.Offset.BlockIdx = i
+					m.Offset.LineIdx = j
+					break
+				}
+				currentLine++
+			}
+			if currentLine >= targetAbsLine {
+				break
+			}
+		}
+	}
 }
 
 func (m *Model) ViewLines() []string {
@@ -118,6 +183,21 @@ func (m *Model) ViewLines() []string {
 		visibleLines = append(visibleLines, block.Lines...)
 	}
 	return visibleLines
+}
+
+func (m *Model) MaxLineLength() int {
+	totalLines := 0
+	for _, block := range m.Blocks {
+		totalLines += len(block.Lines)
+	}
+	gutterWidth := len(strconv.Itoa(totalLines))
+	// Layout: [padding 2][indicator 1][line numbers gutterWidth+2][content]
+	// Subtract extra 2 for some right margin
+	maxLen := m.Width - 5 - gutterWidth - 2
+	if maxLen < 20 {
+		maxLen = 20
+	}
+	return maxLen
 }
 
 func (m *Model) InsertChar(r rune) {
@@ -132,6 +212,12 @@ func (m *Model) InsertChar(r rune) {
 	}
 
 	line := &block.Lines[m.Cursor.LineIdx]
+
+	// Enforce max line length (except for math blocks and $ handling)
+	maxLen := m.MaxLineLength()
+	if block.Type == TextBlock && r != '$' && len([]rune(*line)) >= maxLen {
+		return // Don't insert if at max length
+	}
 
 	if r == '$' && block.Type == TextBlock {
 		runes := []rune(*line)
@@ -317,6 +403,8 @@ func (m *Model) Backspace() {
 		m.Cursor.LineIdx = newCursorLineIdx
 		m.Cursor.Col = newCursorCol
 	}
+
+	m.ensureCursorInView()
 }
 
 // Deletes the character under the cursor

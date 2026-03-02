@@ -209,8 +209,21 @@ func (m *Model) SaveToFile(notesDir string) error {
 	return nil
 }
 
+// LoadFromFile loads a markdown file and returns a new Model
+func LoadFromFile(path string) (*Model, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	content := string(data)
+	lines := strings.Split(content, "\n")
+
+	return CreateModelFromLines(lines), nil
+}
+
 // createModelFromLines creates a new Model from a slice of lines, parsing them into blocks
-func (m *Model) createModelFromLines(lines []string) *Model {
+func CreateModelFromLines(lines []string) *Model {
 	if len(lines) == 0 {
 		return &Model{Blocks: []Block{{Type: TextBlock, Lines: []string{""}}}}
 	}

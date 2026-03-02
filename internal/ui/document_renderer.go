@@ -13,17 +13,9 @@ import (
 )
 
 var (
-	modeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFF")).
-			Background(lipgloss.Color("#FF5F87")).
-			Padding(0, 1)
-
-	clearStyle = lipgloss.NewStyle()
-
 	gutterStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	currentLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
 	markdownRender   *glamour.TermRenderer
-	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 
 	mathGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")
 	textGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("│")
@@ -34,13 +26,6 @@ type renderedBlock struct {
 	lines             [][]string
 	contentStartIdx   int
 	inlineMathChecker func(lineIdx int) bool
-}
-
-var modeName = map[Mode]string{
-	Normal:  "NORMAL",
-	Insert:  "INSERT",
-	Select:  "SELECT",
-	Command: "COMMAND",
 }
 
 func init() {
@@ -54,7 +39,6 @@ func init() {
 	}
 	markdownRender = renderer
 }
-
 
 func trimEmptyLines(lines []string) []string {
 	start := 0
@@ -78,7 +62,7 @@ func renderGlamourLines(content string) []string {
 
 func distributeLines(rendered [][]string, start int, inputCount int, outLines []string) {
 	if len(outLines) <= inputCount {
-		for j := 0; j < inputCount; j++ {
+		for j := range inputCount {
 			if j < len(outLines) {
 				rendered[start+j] = []string{outLines[j]}
 			} else {
@@ -89,7 +73,7 @@ func distributeLines(rendered [][]string, start int, inputCount int, outLines []
 		linesPerInput := len(outLines) / inputCount
 		extra := len(outLines) % inputCount
 		outIdx := 0
-		for j := 0; j < inputCount; j++ {
+		for j := range inputCount {
 			count := linesPerInput
 			if j < extra {
 				count++
@@ -252,52 +236,15 @@ func (m Model) View() tea.View {
 		return tea.NewView("loading...")
 	}
 
-	renderedLeft := modeStyle.Render(modeName[m.mode])
-	
-	var renderedCenter string
-	if m.mode == Command {
-		renderedCenter = clearStyle.Render(":" + m.CommandBuffer)
-	} else if m.StatusMessage != "" {
-		renderedCenter = clearStyle.Render(m.StatusMessage)
-	} else {
-		renderedCenter = clearStyle.Render("[FILENAME]")
+	statusLine := m.RenderStatusline()
+	// Statusline is always 1 line tall
+	renderContentHeight := max(m.height-1, 0)
+
+	// Calculate file tree width offset
+	fileTreeOffset := 0
+	if m.ShowFileTree {
+		fileTreeOffset = m.FileTree.Width + 1 // +1 for separator
 	}
-
-	// Find any error message to display in statusline
-	var statusError string
-	for _, block := range m.Editor.Blocks {
-		if block.HasError && block.ErrorMessage != "" {
-			statusError = block.ErrorMessage
-			break
-		}
-	}
-
-	var renderedRight string
-	if statusError != "" {
-		renderedRight = errorStyle.Render(" "+statusError+" ")
-	} else {
-		renderedRight = modeStyle.Render(" " + m.Time.Format("15:04"))
-	}
-
-	wLeft := lipgloss.Width(renderedLeft)
-	wCenter := lipgloss.Width(renderedCenter)
-	wRight := lipgloss.Width(renderedRight)
-
-	gapWidth := max(m.width-(wLeft+wCenter+wRight), 0)
-
-	gap1Width := gapWidth / 2
-	gap2Width := gapWidth - gap1Width
-
-	gap1 := clearStyle.Width(gap1Width).Render(strings.Repeat(" ", gap1Width))
-	gap2 := clearStyle.Width(gap2Width).Render(strings.Repeat(" ", gap2Width))
-
-	statusLine := lipgloss.JoinHorizontal(lipgloss.Top,
-		renderedLeft,
-		gap1,
-		renderedCenter,
-		gap2,
-		renderedRight,
-	)
 
 	totalLines := 0
 	for _, block := range m.Editor.Blocks {
@@ -305,11 +252,25 @@ func (m Model) View() tea.View {
 	}
 	gutterWidth := len(fmt.Sprint(totalLines))
 
+	// Calculate available content width after accounting for padding, gutter, and file tree
+	// Layout: [padding 2][indicator 1][line numbers gutterWidth+2][content]
+	contentWidth := m.width - 5 - gutterWidth - fileTreeOffset
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	// Calculate absolute offset line number
+	offsetAbsLine := 0
+	for i := 0; i < m.Editor.Offset.BlockIdx && i < len(m.Editor.Blocks); i++ {
+		offsetAbsLine += len(m.Editor.Blocks[i].Lines)
+	}
+	offsetAbsLine += m.Editor.Offset.LineIdx
+
 	var contentBuilder strings.Builder
 	globalLineIdx := 0
+	visualLinesRendered := 0
 
 	// Track visual line mapping for cursor positioning
-	// visualLineMap[blockIdx] = list of visual line counts per logical line
 	visualLineMap := make(map[int][]int)
 
 	for blockIdx, block := range m.Editor.Blocks {
@@ -333,14 +294,27 @@ func (m Model) View() tea.View {
 				visualLineMap[blockIdx][i] = 1
 			}
 			for i := range height {
-				lineNum := globalLineIdx + 1 + i
+				// Skip lines before offset
+				if globalLineIdx < offsetAbsLine {
+					globalLineIdx++
+					continue
+				}
+				// Stop if viewport is full
+				if visualLinesRendered >= renderContentHeight {
+					globalLineIdx++
+					continue
+				}
+
+				lineNum := globalLineIdx + 1
 				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 				contentBuilder.WriteString(indicator)
 				contentBuilder.WriteString(gutterStyle.Render(lineNumStr))
+				// For math blocks, we can't horizontally scroll the image, so skip horizontal offset
 				contentBuilder.WriteString(latex.PlaceholderRow(block.ImageID, uint16(i), block.ImageCols))
 				contentBuilder.WriteString("\n")
+				globalLineIdx++
+				visualLinesRendered++
 			}
-			globalLineIdx += height
 		} else if useMarkdown {
 			rendered := m.renderTextBlockWithGlamour(blockIdx, block)
 			visualLineMap[blockIdx] = make([]int, len(block.Lines))
@@ -364,6 +338,17 @@ func (m Model) View() tea.View {
 				visualLineMap[blockIdx][lineIdx] = len(visualLines)
 
 				for vIdx, vLine := range visualLines {
+					// Skip lines before offset
+					if globalLineIdx < offsetAbsLine {
+						globalLineIdx++
+						continue
+					}
+					// Stop if viewport is full
+					if visualLinesRendered >= renderContentHeight {
+						globalLineIdx++
+						continue
+					}
+
 					lineNum := globalLineIdx + 1
 					lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 
@@ -379,9 +364,11 @@ func (m Model) View() tea.View {
 					}
 					contentBuilder.WriteString(indicator)
 					contentBuilder.WriteString(styledGutter)
-					contentBuilder.WriteString(vLine)
+					// Apply horizontal scroll offset and truncate to content width
+					contentBuilder.WriteString(truncateLine(vLine, contentWidth))
 					contentBuilder.WriteString("\n")
 					globalLineIdx++
+					visualLinesRendered++
 				}
 			}
 		} else {
@@ -390,6 +377,17 @@ func (m Model) View() tea.View {
 				visualLineMap[blockIdx][i] = 1
 			}
 			for lineIdx, lineStr := range block.Lines {
+				// Skip lines before offset
+				if globalLineIdx < offsetAbsLine {
+					globalLineIdx++
+					continue
+				}
+				// Stop if viewport is full
+				if visualLinesRendered >= renderContentHeight {
+					globalLineIdx++
+					continue
+				}
+
 				shouldBlank := !(m.mode == Insert && isBlockActive)
 
 				if shouldBlank && block.Type == editor.TextBlock {
@@ -407,20 +405,50 @@ func (m Model) View() tea.View {
 				}
 				contentBuilder.WriteString(indicator)
 				contentBuilder.WriteString(styledGutter)
-				contentBuilder.WriteString(lineStr)
+				// Apply horizontal scroll offset and truncate to content width
+				contentBuilder.WriteString(truncateLine(lineStr, contentWidth))
 				contentBuilder.WriteString("\n")
 				globalLineIdx++
+				visualLinesRendered++
 			}
 		}
 	}
 
-	renderContentHeight := max(m.height-lipgloss.Height(statusLine), 0)
-	renderContent := clearStyle.
-		Height(renderContentHeight).
-		PaddingLeft(2).
-		Render(contentBuilder.String())
+	// Remove trailing newline if present
+	contentStr := strings.TrimSuffix(contentBuilder.String(), "\n")
 
-	view := lipgloss.JoinVertical(lipgloss.Top, renderContent, statusLine)
+	// Pad content to fill viewport height using the tracked count
+	for visualLinesRendered < renderContentHeight {
+		contentStr += "\n"
+		visualLinesRendered++
+	}
+
+	// Render file tree if visible
+	var view string
+	if m.ShowFileTree {
+		fileTreeContent := m.FileTree.Render(renderContentHeight)
+		fileTreeRender := clearStyle.
+			Width(m.FileTree.Width).
+			Render(fileTreeContent)
+
+		separator := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#45475a")).
+			Render("│")
+
+		editorContent := clearStyle.
+			MaxWidth(m.width - fileTreeOffset).
+			PaddingLeft(2).
+			Render(contentStr)
+
+		mainContent := lipgloss.JoinHorizontal(lipgloss.Top, fileTreeRender, separator, editorContent)
+		view = lipgloss.JoinVertical(lipgloss.Top, mainContent, statusLine)
+	} else {
+		renderContent := clearStyle.
+			MaxWidth(m.width).
+			PaddingLeft(2).
+			Render(contentStr)
+		view = lipgloss.JoinVertical(lipgloss.Top, renderContent, statusLine)
+	}
 
 	// Calculate cursor position
 	cursorBlockIdx := m.Editor.Cursor.BlockIdx
@@ -470,8 +498,17 @@ func (m Model) View() tea.View {
 		cursorY += cursorLineIdx
 	}
 
-	// Cursor X is simple since cursor line shows raw text
+	// Adjust cursor Y for vertical scroll offset
+	cursorY -= offsetAbsLine
+	if cursorY < 0 {
+		cursorY = 0
+	}
+
+	// Cursor X calculation
 	cursorX := 2 + gutterWidth + 3
+	if m.ShowFileTree {
+		cursorX += fileTreeOffset
+	}
 	if cursorBlockIdx < len(m.Editor.Blocks) && cursorLineIdx < len(m.Editor.Blocks[cursorBlockIdx].Lines) {
 		lineLen := len(m.Editor.Blocks[cursorBlockIdx].Lines[cursorLineIdx])
 		if cursorCol > lineLen {
@@ -481,15 +518,9 @@ func (m Model) View() tea.View {
 	cursorX += cursorCol
 
 	var cursorConfig tea.Cursor
+	// When file tree is focused, cursor is hidden (selection shown via highlight)
 	if m.mode == Command {
-		// Position cursor at end of command buffer
-		cmdCursorX := 2 + len(":" + m.CommandBuffer)
-		cmdCursorY := m.height - 1
-		cursorConfig = tea.Cursor{
-			Position: tea.Position{X: cmdCursorX, Y: cmdCursorY},
-			Shape:    tea.CursorBar,
-			Color:    lipgloss.White,
-		}
+		view, cursorConfig = RenderCommandBar(m, view)
 	} else if m.mode == Normal {
 		cursorConfig = tea.Cursor{
 			Position: tea.Position{X: cursorX, Y: cursorY},
@@ -507,8 +538,25 @@ func (m Model) View() tea.View {
 
 	v := tea.NewView(view)
 	v.AltScreen = true
-	v.Cursor = &cursorConfig
+	// Hide hardware cursor when file tree is focused - selection shown via highlight
+	if m.ShowFileTree && m.FileTree.Focused && m.mode == Normal {
+		v.Cursor = nil
+	} else {
+		v.Cursor = &cursorConfig
+	}
 	return v
+}
+
+// truncateLine truncates a line to fit within maxChars.
+func truncateLine(line string, maxChars int) string {
+	if maxChars <= 0 {
+		return ""
+	}
+	runes := []rune(line)
+	if len(runes) > maxChars {
+		runes = runes[:maxChars]
+	}
+	return string(runes)
 }
 
 func (m Model) applyInlinePlaceholders(blockIdx, lineIdx int, lineStr string) string {
