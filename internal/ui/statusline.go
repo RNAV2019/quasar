@@ -39,6 +39,8 @@ var modeName = map[Mode]string{
 	Insert:  "INSERT",
 	Select:  "SELECT",
 	Command: "COMMAND",
+	NewNote: "NEW NOTE",
+	Help:    "HELP",
 }
 
 // getModeStyle returns the appropriate style for the current mode
@@ -50,25 +52,11 @@ func (m Model) getModeStyle() lipgloss.Style {
 		return selectModeStyle
 	case Command:
 		return commandModeStyle
+	case NewNote:
+		return normalModeStyle
 	default:
 		return normalModeStyle
 	}
-}
-
-// getSeparatorStyle returns the separator style for the current mode
-func (m Model) getSeparatorStyle() lipgloss.Style {
-	modeColor := "#85aff3" // normal
-	switch m.mode {
-	case Insert:
-		modeColor = "#a1dc9c"
-	case Select:
-		modeColor = "#c5a1f0"
-	case Command:
-		modeColor = "#f3ae83"
-	}
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#313244")).
-		Background(lipgloss.Color(modeColor))
 }
 
 // getTimeStyle returns the time section style for the current mode
@@ -147,18 +135,23 @@ func (m Model) RenderStatusline() string {
 	renderedLeft := modeStyle.Render(" " + modeName[m.mode] + " ")
 
 	// Get filename for center
-	filename := m.getFilename()
 	var renderedCenter string
-	if m.StatusMessage != "" {
+	if m.CurrentFile == "" {
+		// No file open - show notebook name or empty
+		if m.NotebookName != "" {
+			renderedCenter = clearStyle.Render(m.NotebookName)
+		}
+	} else if m.StatusMessage != "" {
 		renderedCenter = clearStyle.Render(m.StatusMessage)
 	} else {
+		filename := m.getFilename()
 		renderedCenter = clearStyle.Render(filename)
 	}
 
 	// Get cursor position for right side
 	cursorLine := 1
 	cursorCol := 1
-	if m.Editor.Cursor.BlockIdx < len(m.Editor.Blocks) {
+	if m.CurrentFile != "" && m.Editor.Cursor.BlockIdx < len(m.Editor.Blocks) {
 		// Calculate global line number
 		for i := 0; i < m.Editor.Cursor.BlockIdx; i++ {
 			cursorLine += len(m.Editor.Blocks[i].Lines)
@@ -187,7 +180,12 @@ func (m Model) RenderStatusline() string {
 		renderedSep := sepStyle.Render(sep)
 
 		// Build the right side: position (dark gray bg, blue text) + separator + time (mode color)
-		posStr := fmt.Sprintf(" %d:%d ", cursorLine, cursorCol)
+		var posStr string
+		if m.CurrentFile == "" {
+			posStr = " ~ "
+		} else {
+			posStr = fmt.Sprintf(" %d:%d ", cursorLine, cursorCol)
+		}
 		lineNumberStyle := m.getLineNumberStyle()
 		renderedPos := lineNumberStyle.Render(posStr)
 

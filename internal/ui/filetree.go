@@ -47,7 +47,28 @@ func NewFileTree(notesDir string) *FileTree {
 	return ft
 }
 
+func NewFileTreeForNotebook(notebookPath, notebookName string) *FileTree {
+	ft := &FileTree{
+		NotesDir:  notebookPath,
+		Width:     28,
+		CursorIdx: 0,
+		Focused:   false,
+	}
+	ft.Root = FileNode{
+		Name:     notebookName,
+		Path:     notebookPath,
+		IsDir:    true,
+		Expanded: true,
+	}
+	ft.Root.Children = ft.scanDirectory(notebookPath)
+	ft.flattenVisible()
+	return ft
+}
+
 func (ft *FileTree) Refresh() {
+	// Preserve expanded paths before rebuilding
+	expandedPaths := ft.getExpandedPaths()
+
 	rootName := filepath.Base(ft.NotesDir)
 	if rootName == "." || rootName == "" {
 		rootName = "notes"
@@ -60,7 +81,29 @@ func (ft *FileTree) Refresh() {
 		Expanded: true,
 	}
 	ft.Root.Children = ft.scanDirectory(ft.NotesDir)
+
+	// Restore expansion state
+	for _, path := range expandedPaths {
+		ft.Root = ft.updateNodeExpanded(ft.Root, path, true)
+	}
+
 	ft.flattenVisible()
+}
+
+// getExpandedPaths returns a list of all expanded directory paths
+func (ft *FileTree) getExpandedPaths() []string {
+	var paths []string
+	ft.collectExpandedPaths(&ft.Root, &paths)
+	return paths
+}
+
+func (ft *FileTree) collectExpandedPaths(node *FileNode, paths *[]string) {
+	if node.IsDir && node.Expanded && node.Path != ft.NotesDir {
+		*paths = append(*paths, node.Path)
+	}
+	for i := range node.Children {
+		ft.collectExpandedPaths(&node.Children[i], paths)
+	}
 }
 
 func (ft *FileTree) scanDirectory(path string) []FileNode {

@@ -11,6 +11,7 @@ import (
 	"github.com/RNAV2019/quasar/internal/config"
 	"github.com/RNAV2019/quasar/internal/editor"
 	"github.com/RNAV2019/quasar/internal/latex"
+	"github.com/RNAV2019/quasar/internal/notebook"
 )
 
 type Mode int
@@ -20,6 +21,8 @@ const (
 	Insert
 	Select
 	Command
+	NewNote
+	Help
 )
 
 type Model struct {
@@ -38,6 +41,11 @@ type Model struct {
 	FileTree       *FileTree
 	ShowFileTree   bool
 	pendingSpace   bool // Track if space was pressed (for space+key combos)
+	NewNoteDialog  NewNoteDialog
+	HelpDialog     HelpDialog
+	NotebookName   string
+	NotebookPath   string
+	CurrentFile    string // Path to currently open file, empty if no file open
 }
 
 type TickMsg time.Time
@@ -206,6 +214,22 @@ func (m *Model) loadFile(path string) error {
 	}
 	// Update editor size to account for file tree
 	m.updateEditorSize()
+	m.CurrentFile = path
+	return nil
+}
+
+// createNewNote creates a new note in the current notebook
+func (m *Model) createNewNote(name string) error {
+	spec := notebook.ParseNoteName(name, m.NotebookPath)
+	if err := spec.Create(); err != nil {
+		return err
+	}
+	// Refresh file tree
+	m.FileTree.Refresh()
+	// Load the new note
+	if err := m.loadFile(spec.Path); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -226,6 +250,20 @@ func (m *Model) executeCommand() bool {
 		return false
 	case "q", "quit":
 		return true
+	case "new":
+		if m.NotebookPath == "" {
+			m.StatusMessage = "No notebook open"
+			return false
+		}
+		m.mode = NewNote
+		m.NewNoteDialog.Activate()
+		return false
+	case "h", "help":
+		m.mode = Help
+		m.HelpDialog.Activate()
+		m.CmdInput.SetValue("")
+		m.CmdInput.Blur()
+		return false
 	default:
 		m.StatusMessage = fmt.Sprintf("unknown command: %s", cmd)
 		return false
@@ -248,9 +286,21 @@ func InitialModel(cfg *config.Config) Model {
 		CmdInput:      ti,
 		FileTree:      NewFileTree(cfg.NotesDir),
 		ShowFileTree:  false,
+		NewNoteDialog: NewNewNoteDialog(),
+		HelpDialog:    NewHelpDialog(),
 	}
 	// Initialize parsed document
 	m.ParsedDoc = editor.ParseDocument(m.Editor.Blocks)
+	return m
+}
+
+func InitialModelWithNotebook(cfg *config.Config, notebookPath, notebookName string) Model {
+	m := InitialModel(cfg)
+	m.NotebookName = notebookName
+	m.NotebookPath = notebookPath
+	m.FileTree = NewFileTreeForNotebook(notebookPath, notebookName)
+	m.ShowFileTree = true
+	m.FileTree.Focused = true
 	return m
 }
 
@@ -305,14 +355,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.executeCommand() {
 					return m, tea.Quit
 				}
-				m.mode = Normal
-				m.CmdInput.SetValue("")
-				m.CmdInput.Blur()
+				if m.mode != NewNote && m.mode != Help {
+					m.mode = Normal
+					m.CmdInput.SetValue("")
+					m.CmdInput.Blur()
+				}
 			default:
 				var cmd tea.Cmd
 				m.CmdInput, cmd = m.CmdInput.Update(msg)
 				cmds = append(cmds, cmd)
 			}
+		} else if m.mode == NewNote {
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				m.mode = Normal
+				m.NewNoteDialog.Deactivate()
+				m.StatusMessage = ""
+			case "enter":
+				noteName := m.NewNoteDialog.Value()
+				if noteName != "" {
+					if err := m.createNewNote(noteName); err != nil {
+						m.StatusMessage = fmt.Sprintf("Error: %v", err)
+					} else {
+						m.StatusMessage = ""
+					}
+				}
+				m.mode = Normal
+				m.NewNoteDialog.Deactivate()
+			default:
+				m.NewNoteDialog.Update(msg)
+			}
+		} else if m.mode == Help {
+			// Any key closes help dialog
+			m.mode = Normal
+			m.HelpDialog.Deactivate()
 		} else {
 			// Handle space+key combinations first (works regardless of file tree focus)
 			if m.pendingSpace {
@@ -359,6 +435,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				case "esc":
 					m.FileTree.Focused = false
+				case ":":
+					// Allow entering command mode from file tree
+					m.mode = Command
+					m.CmdInput.SetValue("")
+					cmds = append(cmds, m.CmdInput.Focus())
 				case "space":
 					m.pendingSpace = true
 				}

@@ -246,6 +246,63 @@ func (m Model) View() tea.View {
 		fileTreeOffset = m.FileTree.Width + 1 // +1 for separator
 	}
 
+	// Handle empty editor state (no file open)
+	if m.CurrentFile == "" {
+		var contentBuilder strings.Builder
+		for i := 0; i < renderContentHeight; i++ {
+			contentBuilder.WriteString(gutterStyle.Render(" ~"))
+			contentBuilder.WriteString("\n")
+		}
+		contentStr := strings.TrimSuffix(contentBuilder.String(), "\n")
+
+		var view string
+		if m.ShowFileTree {
+			fileTreeContent := m.FileTree.Render(renderContentHeight)
+			fileTreeRender := clearStyle.
+				Width(m.FileTree.Width).
+				Render(fileTreeContent)
+
+			separator := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#45475a")).
+				Render("│")
+
+			editorContent := clearStyle.
+				MaxWidth(m.width - fileTreeOffset).
+				PaddingLeft(2).
+				Render(contentStr)
+
+			mainContent := lipgloss.JoinHorizontal(lipgloss.Top, fileTreeRender, separator, editorContent)
+			view = lipgloss.JoinVertical(lipgloss.Top, mainContent, statusLine)
+		} else {
+			renderContent := clearStyle.
+				MaxWidth(m.width).
+				PaddingLeft(2).
+				Render(contentStr)
+			view = lipgloss.JoinVertical(lipgloss.Top, renderContent, statusLine)
+		}
+
+		// Render dialogs on top of the view
+		var cursorConfig tea.Cursor
+		if m.mode == Command {
+			view, cursorConfig = RenderCommandBar(m, view)
+		} else if m.mode == Help {
+			view, cursorConfig = m.HelpDialog.Render(view, m)
+		} else if m.mode == NewNote {
+			view, cursorConfig = m.NewNoteDialog.Render(view, m)
+		}
+
+		v := tea.NewView(view)
+		v.AltScreen = true
+		// In empty state, only show cursor for Command/NewNote modes
+		// Help mode and Normal mode (no content) have no cursor
+		if (m.mode == Command || m.mode == NewNote) && cursorConfig.Shape != 0 {
+			v.Cursor = &cursorConfig
+		} else {
+			v.Cursor = nil
+		}
+		return v
+	}
+
 	totalLines := 0
 	for _, block := range m.Editor.Blocks {
 		totalLines += len(block.Lines)
@@ -521,6 +578,10 @@ func (m Model) View() tea.View {
 	// When file tree is focused, cursor is hidden (selection shown via highlight)
 	if m.mode == Command {
 		view, cursorConfig = RenderCommandBar(m, view)
+	} else if m.mode == NewNote {
+		view, cursorConfig = m.NewNoteDialog.Render(view, m)
+	} else if m.mode == Help {
+		view, cursorConfig = m.HelpDialog.Render(view, m)
 	} else if m.mode == Normal {
 		cursorConfig = tea.Cursor{
 			Position: tea.Position{X: cursorX, Y: cursorY},
@@ -538,8 +599,13 @@ func (m Model) View() tea.View {
 
 	v := tea.NewView(view)
 	v.AltScreen = true
-	// Hide hardware cursor when file tree is focused - selection shown via highlight
-	if m.ShowFileTree && m.FileTree.Focused && m.mode == Normal {
+	// Cursor visibility logic:
+	// - Help mode: no cursor
+	// - File tree focused in Normal mode: no cursor (selection shown via highlight)
+	// - Otherwise: show cursor
+	if m.mode == Help {
+		v.Cursor = nil
+	} else if m.ShowFileTree && m.FileTree.Focused && m.mode == Normal {
 		v.Cursor = nil
 	} else {
 		v.Cursor = &cursorConfig

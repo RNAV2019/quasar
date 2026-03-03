@@ -9,9 +9,9 @@
 - [X] Implement syntax highlighting for markdown
 - [X] Add frontmatter support
 - [X] Add command bar like lazyvim
-- [ ] Create folder hierachy based off of tags
-- [ ] Implement save/opening of md files
-- [ ] Add file browser on left side for notes
+- [X] Create folder hierachy based off of tags
+- [X] Implement save/opening of md files
+- [X] Add file browser on left side for notes
 - [X] Improve statusline
 - [ ] Implement /h1 etc to build modal blocks
 - [ ] Implement gw, miw, x, copy, paste, :3 etc
