@@ -197,7 +197,7 @@ tags: []
 		GlobalMetadata: &Metadata{
 			Title: "",
 			Date:  "",
-			Tags:  []string{},
+			Tag:   "",
 		},
 		Blocks: []ParsedBlock{
 			{

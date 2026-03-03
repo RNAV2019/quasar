@@ -3,7 +3,6 @@
 - [X] Determine the height requirement for an expression to render and insert that many new lines -> Set height via Kitty Display Protocol
 - [X] Generalize math syntax to work for multiline expressions
 - [X] Add inline math ability
-- [ ] When using D to delete it should wrap next line to cursor
 - [X] Ensure all/most markdown features work and pretty print
 - [X] Optimize redraws of the image
 - [X] Implement syntax highlighting for markdown
@@ -13,5 +12,10 @@
 - [X] Implement save/opening of md files
 - [X] Add file browser on left side for notes
 - [X] Improve statusline
-- [ ] Implement /h1 etc to build modal blocks
+- [X] Fix code blocks 
+- [X] Fix cursor when tabbing
+- [X] Fix files being saved in root and subfolders instead of just subfolders
+- [X] Implement /h1 etc to build modal blocks
+- [ ] Implement save indicator
+- [ ] Implement some sort of spell checker
 - [ ] Implement gw, miw, x, copy, paste, :3 etc

@@ -10,11 +10,13 @@ import (
 	"github.com/RNAV2019/quasar/internal/editor"
 	"github.com/RNAV2019/quasar/internal/latex"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
 	gutterStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	currentLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
+	tabHighlightStyle = lipgloss.NewStyle().Background(lipgloss.Color("#313244"))
 	markdownRender   *glamour.TermRenderer
 
 	mathGutterIndicator  = lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")
@@ -289,6 +291,14 @@ func (m Model) View() tea.View {
 			view, cursorConfig = m.HelpDialog.Render(view, m)
 		} else if m.mode == NewNote {
 			view, cursorConfig = m.NewNoteDialog.Render(view, m)
+		} else if m.mode == DeleteConfirm {
+			view, cursorConfig = m.DeleteConfirmDialog.Render(view, m)
+		}
+
+		// Render autocomplete if active
+		if m.Autocomplete.IsActive() {
+			m.Autocomplete.SetPosition(2, 3)
+			view = m.Autocomplete.Render(view, m)
 		}
 
 		v := tea.NewView(view)
@@ -382,11 +392,11 @@ func (m Model) View() tea.View {
 
 				var visualLines []string
 				if isCursorLine || hasInlineMath {
-					visualLines = []string{m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr)}
+					visualLines = []string{editor.ExpandTabs(m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr))}
 				} else if lineIdx >= rendered.contentStartIdx && rendered.lines[lineIdx] != nil && len(rendered.lines[lineIdx]) > 0 {
 					visualLines = rendered.lines[lineIdx]
 				} else {
-					visualLines = []string{lineStr}
+					visualLines = []string{editor.ExpandTabs(lineStr)}
 				}
 				if len(visualLines) == 0 {
 					visualLines = []string{""}
@@ -445,11 +455,23 @@ func (m Model) View() tea.View {
 					continue
 				}
 
-				shouldBlank := !(m.mode == Insert && isBlockActive)
+			shouldBlank := !(m.mode == Insert && isBlockActive)
 
-				if shouldBlank && block.Type == editor.TextBlock {
-					lineStr = m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr)
-				}
+			// Check if cursor is on a tab in Normal mode
+			isOnTab := m.mode == Normal && isBlockActive && lineIdx == m.Editor.Cursor.LineIdx &&
+				m.Editor.Cursor.Col < len([]rune(lineStr)) && len([]rune(lineStr)) > 0 &&
+				[]rune(lineStr)[m.Editor.Cursor.Col] == '\t'
+
+			if shouldBlank && block.Type == editor.TextBlock {
+				lineStr = m.applyInlinePlaceholders(blockIdx, lineIdx, lineStr)
+			}
+
+			// Expand tabs with highlighting if cursor is on a tab
+			if isOnTab {
+				lineStr = renderLineWithTabHighlight(lineStr, m.Editor.Cursor.Col, tabHighlightStyle)
+			} else {
+				lineStr = editor.ExpandTabs(lineStr)
+			}
 
 				lineNum := globalLineIdx + 1
 				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
@@ -571,8 +593,11 @@ func (m Model) View() tea.View {
 		if cursorCol > lineLen {
 			cursorCol = lineLen
 		}
+		// Convert rune column to visual column (tabs expand to 4 spaces)
+		line := m.Editor.Blocks[cursorBlockIdx].Lines[cursorLineIdx]
+		visualCol := editor.RuneColToVisualCol(line, cursorCol)
+		cursorX += visualCol
 	}
-	cursorX += cursorCol
 
 	var cursorConfig tea.Cursor
 	// When file tree is focused, cursor is hidden (selection shown via highlight)
@@ -582,6 +607,8 @@ func (m Model) View() tea.View {
 		view, cursorConfig = m.NewNoteDialog.Render(view, m)
 	} else if m.mode == Help {
 		view, cursorConfig = m.HelpDialog.Render(view, m)
+	} else if m.mode == DeleteConfirm {
+		view, cursorConfig = m.DeleteConfirmDialog.Render(view, m)
 	} else if m.mode == Normal {
 		cursorConfig = tea.Cursor{
 			Position: tea.Position{X: cursorX, Y: cursorY},
@@ -597,13 +624,20 @@ func (m Model) View() tea.View {
 		}
 	}
 
+	// Render autocomplete if active (in Insert mode)
+	if m.Autocomplete.IsActive() {
+		m.Autocomplete.SetPosition(cursorX, cursorY+1)
+		view = m.Autocomplete.Render(view, m)
+	}
+
 	v := tea.NewView(view)
 	v.AltScreen = true
 	// Cursor visibility logic:
 	// - Help mode: no cursor
+	// - DeleteConfirm mode: no cursor
 	// - File tree focused in Normal mode: no cursor (selection shown via highlight)
 	// - Otherwise: show cursor
-	if m.mode == Help {
+	if m.mode == Help || m.mode == DeleteConfirm {
 		v.Cursor = nil
 	} else if m.ShowFileTree && m.FileTree.Focused && m.mode == Normal {
 		v.Cursor = nil
@@ -613,16 +647,12 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// truncateLine truncates a line to fit within maxChars.
+// truncateLine truncates a line to fit within maxChars, preserving ANSI escape codes.
 func truncateLine(line string, maxChars int) string {
 	if maxChars <= 0 {
 		return ""
 	}
-	runes := []rune(line)
-	if len(runes) > maxChars {
-		runes = runes[:maxChars]
-	}
-	return string(runes)
+	return ansi.Truncate(line, maxChars, "")
 }
 
 func (m Model) applyInlinePlaceholders(blockIdx, lineIdx int, lineStr string) string {
@@ -684,6 +714,26 @@ func (m Model) applyInlinePlaceholders(blockIdx, lineIdx int, lineStr string) st
 
 	if pos < len(runes) {
 		result.WriteString(string(runes[pos:]))
+	}
+
+	return result.String()
+}
+
+// renderLineWithTabHighlight expands tabs and highlights the tab at cursor position
+func renderLineWithTabHighlight(line string, cursorCol int, highlightStyle lipgloss.Style) string {
+	runes := []rune(line)
+	var result strings.Builder
+
+	for i, r := range runes {
+		if r == '\t' {
+			if i == cursorCol {
+				result.WriteString(highlightStyle.Render("    "))
+			} else {
+				result.WriteString("    ")
+			}
+		} else {
+			result.WriteString(string(r))
+		}
 	}
 
 	return result.String()

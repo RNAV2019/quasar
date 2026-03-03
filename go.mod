@@ -5,6 +5,7 @@ go 1.26
 require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.0
+	github.com/atotto/clipboard v0.1.4
 	github.com/blacktop/go-termimg v0.1.26
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v2 v2.4.0
@@ -12,7 +13,6 @@ require (
 
 require (
 	github.com/alecthomas/chroma/v2 v2.23.1 // indirect
-	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
@@ -48,7 +48,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.0
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
 	github.com/charmbracelet/glamour v0.10.0
-	github.com/charmbracelet/x/ansi v0.11.6 // indirect
+	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect

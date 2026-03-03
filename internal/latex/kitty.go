@@ -71,13 +71,8 @@ func TransmitImageForKitty(pngPath string, targetRows, targetCols int) (ImageInf
 		image.Width(targetCols)
 	}
 
-	if targetRows == 1 {
-		image.Scale(termimg.ScaleFit)
-	} else if targetRows > 0 {
-		image.Scale(termimg.ScaleStretch)
-	} else {
-		image.Scale(termimg.ScaleFit)
-	}
+	// Use ScaleFit for all cases to maintain aspect ratio
+	image.Scale(termimg.ScaleFit)
 
 	rendered, err := image.Render()
 	if err != nil {

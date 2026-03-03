@@ -14,7 +14,7 @@ import (
 type Metadata struct {
 	Title  string `yaml:"title"`
 	Date   string `yaml:"date,omitempty"`
-	Tags   []string `yaml:"tags,omitempty"`
+	Tag   string `yaml:"tag,omitempty"`
 }
 
 // ExtractFrontMatter parses YAML front matter from markdown content
@@ -85,13 +85,25 @@ func (m *Model) ToMarkdownContent(preserveFrontMatter []string) ([]string, error
 			}
 		}
 
-		switch block.Type {
-		case TextBlock:
-			lines = append(lines, content...)
-		case MathBlock:
-			lines = append(lines, content...)
+		// Add blank line before math block if previous content exists
+		if block.Type == MathBlock && len(lines) > 0 {
+			lastLine := lines[len(lines)-1]
+			if lastLine != "" {
+				lines = append(lines, "")
+			}
 		}
-		lines = append(lines, "") // blank line between blocks
+
+		lines = append(lines, content...)
+
+		// Add blank line after math block
+		if block.Type == MathBlock && blockIdx < len(m.Blocks)-1 {
+			lines = append(lines, "")
+		}
+
+		// Add blank line after text block if next block is also text
+		if block.Type == TextBlock && blockIdx < len(m.Blocks)-1 && m.Blocks[blockIdx+1].Type == TextBlock {
+			lines = append(lines, "")
+		}
 	}
 
 	// Remove trailing empty lines
@@ -155,7 +167,9 @@ func SanitizeFilename(title string) string {
 }
 
 // SaveToFile saves the model content to a markdown file
-func (m *Model) SaveToFile(notesDir string) error {
+// If currentPath is provided, it saves to that path (preserving original location)
+// Otherwise, it constructs the path from the title and tag in front matter
+func (m *Model) SaveToFile(notesDir string, currentPath string) error {
 	// Convert blocks to lines for front matter extraction
 	allLines := []string{}
 	for _, block := range m.Blocks {
@@ -177,9 +191,25 @@ func (m *Model) SaveToFile(notesDir string) error {
 		metadata.Title = extractedTitle
 	}
 
-	// Generate filename from title
-	filename := SanitizeFilename(metadata.Title) + ".md"
-	filepath := filepath.Join(notesDir, filename)
+	var targetPath string
+	if currentPath != "" {
+		// Use existing file path
+		targetPath = currentPath
+	} else {
+		// Construct path from title and tag
+		filename := SanitizeFilename(metadata.Title) + ".md"
+		if metadata.Tag != "" {
+			targetPath = filepath.Join(notesDir, metadata.Tag, filename)
+		} else {
+			targetPath = filepath.Join(notesDir, filename)
+		}
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
 
 	// Get the original front matter lines to preserve
 	var frontMatterLines []string
@@ -202,7 +232,7 @@ func (m *Model) SaveToFile(notesDir string) error {
 
 	// Write file
 	fileContent := strings.Join(content, "\n")
-	if err := os.WriteFile(filepath, []byte(fileContent), 0644); err != nil {
+	if err := os.WriteFile(targetPath, []byte(fileContent), 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -222,7 +252,7 @@ func LoadFromFile(path string) (*Model, error) {
 	return CreateModelFromLines(lines), nil
 }
 
-// createModelFromLines creates a new Model from a slice of lines, parsing them into blocks
+// CreateModelFromLines creates a new Model from a slice of lines, parsing them into blocks
 func CreateModelFromLines(lines []string) *Model {
 	if len(lines) == 0 {
 		return &Model{Blocks: []Block{{Type: TextBlock, Lines: []string{""}}}}
@@ -230,11 +260,15 @@ func CreateModelFromLines(lines []string) *Model {
 
 	blocks := []Block{}
 	currentBlock := Block{Type: TextBlock, Lines: []string{}}
-	
+
 	for _, line := range lines {
 		if line == "$$" && currentBlock.Type == TextBlock {
 			// Start of math block - save current text block if not empty
-			if len(currentBlock.Lines) > 0 && !(len(currentBlock.Lines) == 1 && currentBlock.Lines[0] == "") {
+			// Strip trailing empty lines from text block before saving
+			for len(currentBlock.Lines) > 0 && currentBlock.Lines[len(currentBlock.Lines)-1] == "" {
+				currentBlock.Lines = currentBlock.Lines[:len(currentBlock.Lines)-1]
+			}
+			if len(currentBlock.Lines) > 0 {
 				blocks = append(blocks, currentBlock)
 			}
 			currentBlock = Block{Type: MathBlock, Lines: []string{line}}
@@ -248,15 +282,18 @@ func CreateModelFromLines(lines []string) *Model {
 			currentBlock.Lines = append(currentBlock.Lines, line)
 		}
 	}
-	
-	// Add final block if not empty
+
+	// Add final block if not empty (strip trailing empty lines first)
+	for len(currentBlock.Lines) > 0 && currentBlock.Lines[len(currentBlock.Lines)-1] == "" {
+		currentBlock.Lines = currentBlock.Lines[:len(currentBlock.Lines)-1]
+	}
 	if len(currentBlock.Lines) > 0 {
 		blocks = append(blocks, currentBlock)
 	}
-	
+
 	if len(blocks) == 0 {
 		blocks = []Block{{Type: TextBlock, Lines: []string{""}}}
 	}
-	
+
 	return &Model{Blocks: blocks}
 }

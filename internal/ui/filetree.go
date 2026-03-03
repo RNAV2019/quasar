@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"charm.land/lipgloss/v2"
 )
 
@@ -27,19 +29,19 @@ type FileTree struct {
 }
 
 var (
-	treeDirStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa"))
-	treeFileStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
+	treeDirStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa"))
+	treeFileStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
 	treeSelectedStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#45475a")).
-			Foreground(lipgloss.Color("#f5c2e7"))
-	treeEmptyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
+				Background(lipgloss.Color("#45475a")).
+				Foreground(lipgloss.Color("#f5c2e7"))
+	treeEmptyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
 	treeIndentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
 )
 
 func NewFileTree(notesDir string) *FileTree {
 	ft := &FileTree{
 		NotesDir:  notesDir,
-		Width:     28,
+		Width:     36,
 		CursorIdx: 0,
 		Focused:   false,
 	}
@@ -50,7 +52,7 @@ func NewFileTree(notesDir string) *FileTree {
 func NewFileTreeForNotebook(notebookPath, notebookName string) *FileTree {
 	ft := &FileTree{
 		NotesDir:  notebookPath,
-		Width:     28,
+		Width:     36,
 		CursorIdx: 0,
 		Focused:   false,
 	}
@@ -263,17 +265,29 @@ func (ft *FileTree) renderNode(node FileNode, isSelected bool) string {
 	// Choose icon based on type and state
 	var icon string
 	if node.IsDir {
-		if node.Expanded {
-			icon = " " // Open folder
+		if len(node.Children) == 0 {
+			icon = "󰝰 " // Empty folder
+		} else if node.Expanded {
+			icon = "󰝰 " // Open folder
 		} else {
-			icon = " " // Closed folder
+			icon = " " // Closed folder
 		}
+	} else if strings.HasSuffix(node.Name, ".md") {
+		icon = " " // Markdown file
 	} else {
-		icon = " " // File icon
+		icon = " " // Other file
 	}
 
-	prefix := indent + icon
+	prefix := indent + icon + " "
 	name := node.Name
+
+	// Calculate available width for name (account for prefix and leading space)
+	// indent uses │  (2 chars per depth), icon is 2 chars, plus 1 for space, plus 1 for leading space
+	prefixWidth := depth*2 + 2 + 1 + 1
+	availableWidth := ft.Width - prefixWidth
+	if availableWidth > 0 && ansi.StringWidth(name) > availableWidth {
+		name = ansi.Truncate(name, availableWidth, "…")
+	}
 
 	var line string
 	if node.IsDir {

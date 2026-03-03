@@ -204,47 +204,12 @@ func (m *Model) InsertChar(r rune) {
 	block := &m.Blocks[m.Cursor.BlockIdx]
 	block.HasError = false // Reset error state on edit
 
-	if block.Type == MathBlock {
-		isDelimiterLine := (m.Cursor.LineIdx == 0 || m.Cursor.LineIdx == len(block.Lines)-1) && block.Lines[m.Cursor.LineIdx] == "$$"
-		if isDelimiterLine {
-			return
-		}
-	}
-
 	line := &block.Lines[m.Cursor.LineIdx]
 
-	// Enforce max line length (except for math blocks and $ handling)
+	// Enforce max line length
 	maxLen := m.MaxLineLength()
-	if block.Type == TextBlock && r != '$' && len([]rune(*line)) >= maxLen {
+	if len([]rune(*line)) >= maxLen {
 		return // Don't insert if at max length
-	}
-
-	if r == '$' && block.Type == TextBlock {
-		runes := []rune(*line)
-		// Check if part of $$ block
-		if m.Cursor.Col > 0 && runes[m.Cursor.Col-1] == '$' {
-			// User typed '$$'. Let's convert the first '$' to a multiline math block.
-			// The `splitBlockForMath` function expects the cursor to be after '$$'.
-			if m.Cursor.Col < len(runes) && runes[m.Cursor.Col] == '$' {
-				// If the next character is the auto-inserted '$', swallow it.
-				*line = string(runes[:m.Cursor.Col-1]) + "$$" + string(runes[m.Cursor.Col+1:])
-			} else {
-				*line = string(runes[:m.Cursor.Col-1]) + "$$" + string(runes[m.Cursor.Col:])
-			}
-			m.Cursor.Col++ // move cursor to be after '$$'
-			m.splitBlockForMath()
-			return
-		} else {
-			// This is the first '$'. Insert '$$' and place cursor in the middle.
-			if m.Cursor.Col >= len(runes) {
-				*line += "$$"
-			} else {
-				*line = string(runes[:m.Cursor.Col]) + "$$" + string(runes[m.Cursor.Col:])
-			}
-			m.Cursor.Col++
-			block.IsDirty = true
-			return
-		}
 	}
 
 	runes := []rune(*line)
@@ -258,69 +223,6 @@ func (m *Model) InsertChar(r rune) {
 	m.Cursor.Col++
 
 	block.IsDirty = true
-}
-
-func (m *Model) splitBlockForMath() {
-	currentBlockIdx := m.Cursor.BlockIdx
-	currentLineIdx := m.Cursor.LineIdx
-	currentCol := m.Cursor.Col
-
-	originalBlock := m.Blocks[currentBlockIdx]
-	lineWithDollars := originalBlock.Lines[currentLineIdx]
-	runes := []rune(lineWithDollars)
-
-	// Text on the line before the "$$"
-	beforeText := string(runes[:currentCol-2])
-	// Text on the line after the "$$"
-	afterText := string(runes[currentCol:])
-
-	// --- Block Assembly ---
-
-	// Part 1: The TextBlock before the math.
-	block1Lines := originalBlock.Lines[:currentLineIdx]
-	if beforeText != "" {
-		block1Lines = append(block1Lines, beforeText)
-	}
-
-	// Part 2: The new MathBlock.
-	block2 := Block{Type: MathBlock, Lines: []string{"$$", "", "$$"}, IsDirty: true}
-
-	// Part 3: The TextBlock after the math.
-	block3Lines := []string{}
-	if afterText != "" {
-		block3Lines = append(block3Lines, afterText)
-	}
-	if currentLineIdx+1 < len(originalBlock.Lines) {
-		block3Lines = append(block3Lines, originalBlock.Lines[currentLineIdx+1:]...)
-	}
-
-	// --- Final Slice Assembly ---
-	finalBlocks := []Block{}
-	finalBlocks = append(finalBlocks, m.Blocks[:currentBlockIdx]...) // Blocks before the one we split.
-
-	cursorBlockOffset := 0
-	if len(block1Lines) > 0 {
-		finalBlocks = append(finalBlocks, Block{Type: TextBlock, Lines: block1Lines, IsDirty: true})
-	} else {
-		cursorBlockOffset = -1 // The original block was removed
-	}
-
-	finalBlocks = append(finalBlocks, block2) // Add the math block
-
-	if len(block3Lines) > 0 {
-		finalBlocks = append(finalBlocks, Block{Type: TextBlock, Lines: block3Lines, IsDirty: true})
-	}
-
-	if currentBlockIdx+1 < len(m.Blocks) {
-		finalBlocks = append(finalBlocks, m.Blocks[currentBlockIdx+1:]...) // Blocks after the one we split.
-	}
-
-	m.Blocks = finalBlocks
-
-	// Update cursor position to be in the new math block
-	m.Cursor.BlockIdx = currentBlockIdx + cursorBlockOffset + 1
-	m.Cursor.LineIdx = 1 // Place cursor on the empty line between the '$$'
-	m.Cursor.Col = 0
 }
 
 func (m *Model) Backspace() {
@@ -361,10 +263,19 @@ func (m *Model) Backspace() {
 	if m.Cursor.Col > 0 {
 		line := &block.Lines[m.Cursor.LineIdx]
 		runes := []rune(*line)
-		runes = append(runes[:m.Cursor.Col-1], runes[m.Cursor.Col:]...)
-		*line = string(runes)
-		block.IsDirty = true
-		m.Cursor.Col--
+		// Check if we're deleting a tab character
+		if runes[m.Cursor.Col-1] == '\t' {
+			// Delete the entire tab
+			runes = append(runes[:m.Cursor.Col-1], runes[m.Cursor.Col:]...)
+			*line = string(runes)
+			block.IsDirty = true
+			m.Cursor.Col--
+		} else {
+			runes = append(runes[:m.Cursor.Col-1], runes[m.Cursor.Col:]...)
+			*line = string(runes)
+			block.IsDirty = true
+			m.Cursor.Col--
+		}
 	} else if m.Cursor.LineIdx > 0 {
 		currentLine := block.Lines[m.Cursor.LineIdx]
 		prevLineIdx := m.Cursor.LineIdx - 1
@@ -471,5 +382,62 @@ func (m *Model) InsertNewLine() {
 	m.Cursor.LineIdx++
 	m.Cursor.Col = 0
 	m.ensureCursorInView()
+}
+
+// TabWidth is the visual width of a tab character
+const TabWidth = 4
+
+// VisualColToRuneCol converts a visual column position to a rune column position.
+// Tabs expand to TabWidth spaces visually.
+func VisualColToRuneCol(line string, visualCol int) int {
+	runes := []rune(line)
+	runeCol := 0
+	currentVisualCol := 0
+
+	for runeCol < len(runes) && currentVisualCol < visualCol {
+		if runes[runeCol] == '\t' {
+			currentVisualCol += TabWidth
+		} else {
+			currentVisualCol++
+		}
+		if currentVisualCol <= visualCol {
+			runeCol++
+		}
+	}
+
+	return runeCol
+}
+
+// RuneColToVisualCol converts a rune column position to a visual column position.
+// Tabs expand to TabWidth spaces visually.
+func RuneColToVisualCol(line string, runeCol int) int {
+	runes := []rune(line)
+	visualCol := 0
+
+	for i := 0; i < runeCol && i < len(runes); i++ {
+		if runes[i] == '\t' {
+			visualCol += TabWidth
+		} else {
+			visualCol++
+		}
+	}
+
+	return visualCol
+}
+
+// ExpandTabs converts tab characters to spaces for display
+func ExpandTabs(line string) string {
+	runes := []rune(line)
+	var result []rune
+	for _, r := range runes {
+		if r == '\t' {
+			for range TabWidth {
+				result = append(result, ' ')
+			}
+		} else {
+			result = append(result, r)
+		}
+	}
+	return string(result)
 }
 
