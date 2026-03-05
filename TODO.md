@@ -16,6 +16,5 @@
 - [X] Fix cursor when tabbing
 - [X] Fix files being saved in root and subfolders instead of just subfolders
 - [X] Implement /h1 etc to build modal blocks
-- [ ] Implement save indicator
-- [ ] Implement some sort of spell checker
-- [ ] Implement gw, miw, x, copy, paste, :3 etc
+- [X] Implement save indicator
+- [X] Implement gw, miw, x, copy, paste, :3 etc

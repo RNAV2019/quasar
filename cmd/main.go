@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/RNAV2019/quasar/internal/cli"
+	"github.com/RNAV2019/quasar/internal/cli/tui"
 	"github.com/RNAV2019/quasar/internal/config"
 	"github.com/RNAV2019/quasar/internal/latex"
 	"github.com/RNAV2019/quasar/internal/notebook"
@@ -19,8 +20,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.NeedsLatexSetup() {
+		if err := tui.RunSetup(cfg.InitLatexFormats); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	cli.OpenNotebookFunc = func(name string) {
-		// Clear any existing kitty graphics before starting
 		latex.DeleteAllImages()
 
 		notebookPath := notebook.Path(cfg.NotesDir, name)

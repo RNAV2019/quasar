@@ -6,11 +6,13 @@ import (
 	"github.com/RNAV2019/quasar/internal/cli/tui"
 	"github.com/RNAV2019/quasar/internal/config"
 	"github.com/RNAV2019/quasar/internal/notebook"
+	"github.com/RNAV2019/quasar/internal/styles"
 	"github.com/spf13/cobra"
 )
 
 var cfg *config.Config
 
+// NewNotebookCmd builds the "nb" subcommand and its children.
 func NewNotebookCmd(config *config.Config) *cobra.Command {
 	cfg = config
 
@@ -30,6 +32,7 @@ func NewNotebookCmd(config *config.Config) *cobra.Command {
 			}
 			cmd.Help()
 		},
+		ValidArgsFunction: notebookCompletionFunc,
 	}
 
 	cmd.AddCommand(newNbNewCmd())
@@ -80,6 +83,7 @@ func newNbDefaultCmd() *cobra.Command {
 		Short: "Set the default notebook",
 		Long:  "Set the specified notebook as the default notebook to open when running 'quasar' without arguments.",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: notebookCompletionFunc,
 		Run: func(cmd *cobra.Command, args []string) {
 			name := args[0]
 
@@ -104,6 +108,7 @@ func newNbDeleteCmd() *cobra.Command {
 		Short: "Delete a notebook",
 		Long:  "Delete the specified notebook after confirmation.",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: notebookCompletionFunc,
 		Run: func(cmd *cobra.Command, args []string) {
 			name := args[0]
 
@@ -134,6 +139,7 @@ func newNbRenameCmd() *cobra.Command {
 		Short: "Rename a notebook",
 		Long:  "Rename the specified notebook. Prompts for the new name.",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: notebookCompletionFunc,
 		Run: func(cmd *cobra.Command, args []string) {
 			oldName := args[0]
 
@@ -184,7 +190,7 @@ func newNbListCmd() *cobra.Command {
 			fmt.Println()
 			for _, nb := range notebooks {
 				if nb.Name == defaultNb {
-					fmt.Printf("  %s %s\n", boldStyle.Render("*"), nb.Name)
+					fmt.Printf("  %s %s\n", styles.BoldStyle.Render("*"), nb.Name)
 				} else {
 					fmt.Printf("    %s\n", nb.Name)
 				}

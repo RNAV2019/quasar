@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// NoteSpec describes the parsed components of a note name and its resolved path.
 type NoteSpec struct {
 	Name     string // Original name input (before colon)
 	Filename string // lowercase, spaces -> dashes
@@ -17,12 +18,14 @@ type NoteSpec struct {
 	Path     string // Full path to the note file
 }
 
+// FrontMatter represents the YAML front matter written into new notes.
 type FrontMatter struct {
 	Title string `yaml:"title"`
 	Tag   string `yaml:"tag,omitempty"`
 	Date  string `yaml:"date"`
 }
 
+// ParseNoteName parses an input string of the form "Name" or "Name:Tag" into a NoteSpec.
 func ParseNoteName(input, notebookPath string) NoteSpec {
 	spec := NoteSpec{}
 
@@ -48,6 +51,7 @@ func ParseNoteName(input, notebookPath string) NoteSpec {
 	return spec
 }
 
+// Create writes a new markdown note file with YAML front matter.
 func (n NoteSpec) Create() error {
 	dir := filepath.Dir(n.Path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -81,6 +85,7 @@ func (n NoteSpec) Create() error {
 	return nil
 }
 
+// EnsureDirectoryExists creates the tag subdirectory if one is specified.
 func (n NoteSpec) EnsureDirectoryExists() error {
 	if n.Tag == "" {
 		return nil

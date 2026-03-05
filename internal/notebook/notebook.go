@@ -1,3 +1,4 @@
+// Package notebook provides CRUD operations for notebook directories and notes.
 package notebook
 
 import (
@@ -7,11 +8,13 @@ import (
 	"strings"
 )
 
+// Notebook represents a named notebook directory.
 type Notebook struct {
 	Name string
 	Path string
 }
 
+// List returns all notebooks found in notesDir.
 func List(notesDir string) ([]Notebook, error) {
 	entries, err := os.ReadDir(notesDir)
 	if err != nil {
@@ -31,6 +34,7 @@ func List(notesDir string) ([]Notebook, error) {
 	return notebooks, nil
 }
 
+// Create creates a new notebook directory with the given name.
 func Create(notesDir, name string) error {
 	if name == "" {
 		return fmt.Errorf("notebook name cannot be empty")
@@ -52,6 +56,7 @@ func Create(notesDir, name string) error {
 	return nil
 }
 
+// Delete removes the named notebook directory and all its contents.
 func Delete(notesDir, name string) error {
 	if name == "" {
 		return fmt.Errorf("notebook name cannot be empty")
@@ -75,6 +80,7 @@ func Delete(notesDir, name string) error {
 	return nil
 }
 
+// Rename renames a notebook directory from oldName to newName.
 func Rename(notesDir, oldName, newName string) error {
 	if oldName == "" || newName == "" {
 		return fmt.Errorf("notebook names cannot be empty")
@@ -106,6 +112,7 @@ func Rename(notesDir, oldName, newName string) error {
 	return nil
 }
 
+// Exists reports whether a notebook with the given name exists.
 func Exists(notesDir, name string) bool {
 	info, err := os.Stat(filepath.Join(notesDir, name))
 	if err != nil {
@@ -114,6 +121,7 @@ func Exists(notesDir, name string) bool {
 	return info.IsDir()
 }
 
+// Path returns the full filesystem path for the named notebook.
 func Path(notesDir, name string) string {
 	return filepath.Join(notesDir, name)
 }

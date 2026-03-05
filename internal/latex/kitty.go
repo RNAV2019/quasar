@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/blacktop/go-termimg"
 )
@@ -25,6 +26,8 @@ var kittyDiacritics = []rune{
 }
 
 var virtualPlacementRe = regexp.MustCompile(`a=p,U=1,i=\d+,c=(\d+),r=(\d+)`)
+
+var stdoutMu sync.Mutex
 
 func diacritic(pos uint16) rune {
 	if int(pos) >= len(kittyDiacritics) {
@@ -49,12 +52,14 @@ func placeholderCell(row, col uint16, idExtra byte) string {
 	return b.String()
 }
 
+// ImageInfo holds the Kitty image ID and grid dimensions after transmission.
 type ImageInfo struct {
 	ImageID uint32
 	Rows    int
 	Cols    int
 }
 
+// TransmitImageForKitty sends a PNG image to the terminal using the Kitty graphics protocol.
 func TransmitImageForKitty(pngPath string, targetRows, targetCols int) (ImageInfo, error) {
 	image, err := termimg.Open(pngPath)
 	if err != nil {
@@ -67,11 +72,7 @@ func TransmitImageForKitty(pngPath string, targetRows, targetCols int) (ImageInf
 	if targetRows > 0 {
 		image.Height(targetRows)
 	}
-	if targetCols > 0 {
-		image.Width(targetCols)
-	}
 
-	// Use ScaleFit for all cases to maintain aspect ratio
 	image.Scale(termimg.ScaleFit)
 
 	rendered, err := image.Render()
@@ -96,6 +97,8 @@ func TransmitImageForKitty(pngPath string, targetRows, targetCols int) (ImageInf
 	cols, rows := extractPlacementDimensions(rendered, targetRows)
 
 	transmitEnd := strings.Index(rendered, placeholderChar)
+
+	stdoutMu.Lock()
 	if transmitEnd > 0 {
 		colorStartIdx := strings.LastIndex(rendered[:transmitEnd], "\x1b[38;2;")
 		if colorStartIdx > 0 {
@@ -106,6 +109,7 @@ func TransmitImageForKitty(pngPath string, targetRows, targetCols int) (ImageInf
 	} else {
 		os.Stdout.WriteString(rendered)
 	}
+	stdoutMu.Unlock()
 
 	return ImageInfo{ImageID: imageID, Rows: rows, Cols: cols}, nil
 }
@@ -119,9 +123,13 @@ func extractPlacementDimensions(rendered string, fallbackRows int) (cols, rows i
 			return c, r
 		}
 	}
-	return 40, fallbackRows
+	if fallbackRows <= 0 {
+		fallbackRows = 3
+	}
+	return 20, fallbackRows
 }
 
+// PlaceholderString returns the full Unicode placeholder grid for the given image.
 func PlaceholderString(imageID uint32, rows, cols int) string {
 	if rows <= 0 || cols <= 0 {
 		return ""
@@ -147,6 +155,7 @@ func PlaceholderString(imageID uint32, rows, cols int) string {
 	return b.String()
 }
 
+// PlaceholderRow returns the Unicode placeholder string for a single row of the image.
 func PlaceholderRow(imageID uint32, row uint16, cols int) string {
 	if cols <= 0 {
 		return ""
@@ -166,11 +175,17 @@ func PlaceholderRow(imageID uint32, row uint16, cols int) string {
 	return b.String()
 }
 
+// DeleteImage sends a Kitty graphics command to delete the image with the given ID.
 func DeleteImage(imageID uint32) {
 	seq := fmt.Sprintf("\x1b_Ga=d,d=i,i=%d,q=2\x1b\\", imageID)
+	stdoutMu.Lock()
 	os.Stdout.WriteString(seq)
+	stdoutMu.Unlock()
 }
 
+// DeleteAllImages sends a Kitty graphics command to delete all transmitted images.
 func DeleteAllImages() {
+	stdoutMu.Lock()
 	os.Stdout.WriteString("\x1b_Ga=d,d=A\x1b\\")
+	stdoutMu.Unlock()
 }

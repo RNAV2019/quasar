@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v2"
 )
 
+// NotebookConfig holds persistent notebook preferences.
 type NotebookConfig struct {
 	DefaultNotebook string `yaml:"default_notebook"`
 }
 
+// NotebooksConfigPath returns the path to the notebooks YAML config file.
 func (c *Config) NotebooksConfigPath() string {
 	return filepath.Join(c.CacheDir, "notebooks.yaml")
 }
 
+// LoadNotebookConfig reads and parses the notebooks config file.
 func (c *Config) LoadNotebookConfig() (*NotebookConfig, error) {
 	path := c.NotebooksConfigPath()
 	data, err := os.ReadFile(path)
@@ -35,6 +37,7 @@ func (c *Config) LoadNotebookConfig() (*NotebookConfig, error) {
 	return &cfg, nil
 }
 
+// SaveNotebookConfig writes the notebooks config to disk.
 func (c *Config) SaveNotebookConfig(cfg *NotebookConfig) error {
 	path := c.NotebooksConfigPath()
 	data, err := yaml.Marshal(cfg)
@@ -49,6 +52,7 @@ func (c *Config) SaveNotebookConfig(cfg *NotebookConfig) error {
 	return nil
 }
 
+// SetDefaultNotebook persists name as the default notebook.
 func (c *Config) SetDefaultNotebook(name string) error {
 	cfg, err := c.LoadNotebookConfig()
 	if err != nil {
@@ -58,6 +62,7 @@ func (c *Config) SetDefaultNotebook(name string) error {
 	return c.SaveNotebookConfig(cfg)
 }
 
+// GetDefaultNotebook returns the name of the default notebook.
 func (c *Config) GetDefaultNotebook() (string, error) {
 	cfg, err := c.LoadNotebookConfig()
 	if err != nil {
@@ -66,38 +71,3 @@ func (c *Config) GetDefaultNotebook() (string, error) {
 	return cfg.DefaultNotebook, nil
 }
 
-func (c *Config) NotebookPath(name string) string {
-	return filepath.Join(c.NotesDir, name)
-}
-
-func (c *Config) NotebookExists(name string) bool {
-	info, err := os.Stat(c.NotebookPath(name))
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
-}
-
-func (c *Config) ListNotebooks() ([]string, error) {
-	entries, err := os.ReadDir(c.NotesDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read notes directory: %w", err)
-	}
-
-	var notebooks []string
-	for _, entry := range entries {
-		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-			notebooks = append(notebooks, entry.Name())
-		}
-	}
-
-	return notebooks, nil
-}
-
-func (c *Config) HasNotebooks() (bool, error) {
-	notebooks, err := c.ListNotebooks()
-	if err != nil {
-		return false, err
-	}
-	return len(notebooks) > 0, nil
-}

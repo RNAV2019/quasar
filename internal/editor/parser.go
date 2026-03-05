@@ -5,14 +5,14 @@ import (
 	"strings"
 )
 
-// InlineMathRegion represents a region of inline math ($...$)
+// InlineMathRegion represents a region of inline math ($...$).
 type InlineMathRegion struct {
 	StartCol int
 	EndCol   int
 	Content  string // latex content without $ delimiters
 }
 
-// ParsedBlock represents a fully parsed block
+// ParsedBlock represents a fully parsed block.
 type ParsedBlock struct {
 	Type            BlockType
 	RawLines        []string        // Original lines
@@ -22,7 +22,7 @@ type ParsedBlock struct {
 	GlamourContent  string          // Content ready for glamour (stripped front matter, cleaned)
 }
 
-// Document represents a fully parsed document
+// Document represents a fully parsed document.
 type Document struct {
 	Blocks         []ParsedBlock
 	GlobalMetadata *Metadata // YAML front matter (if present)
@@ -32,7 +32,7 @@ type Document struct {
 // We handle the edge cases in the parsing logic rather than with complex regex
 var inlineMathRe = regexp.MustCompile(`\$[^\$\n]+?\$`)
 
-// ParseDocument parses blocks into a structured Document
+// ParseDocument parses blocks into a structured Document.
 func ParseDocument(blocks []Block) *Document {
 	doc := &Document{
 		Blocks:         make([]ParsedBlock, len(blocks)),
@@ -46,7 +46,7 @@ func ParseDocument(blocks []Block) *Document {
 	return doc
 }
 
-// ParseBlock parses a single block into a ParsedBlock
+// ParseBlock parses a single block into a ParsedBlock.
 func ParseBlock(block Block) ParsedBlock {
 	pb := ParsedBlock{
 		Type:           block.Type,
@@ -131,12 +131,12 @@ func parseInlineMath(lines []string, contentStartIdx int) []InlineMathRegion {
 	return regions
 }
 
-// GetGlamourContent returns content ready for glamour rendering
+// GetGlamourContent returns content ready for glamour rendering.
 func (p *ParsedBlock) GetGlamourContent() string {
 	return p.GlamourContent
 }
 
-// GetInlineMath returns inline math regions for a given line index within the block
+// GetInlineMath returns inline math regions for a given line index within the block.
 func (p *ParsedBlock) GetInlineMath(lineIdx int) []InlineMathRegion {
 	// Check if lineIdx is within content lines (after front matter)
 	if p.HasFrontMatter && lineIdx < p.FrontMatterEnd {
@@ -179,35 +179,8 @@ func (p *ParsedBlock) GetInlineMath(lineIdx int) []InlineMathRegion {
 	return result
 }
 
-// HasInlineMath checks if a specific line has inline math
+// HasInlineMath checks if a specific line has inline math.
 func (p *ParsedBlock) HasInlineMath(lineIdx int) bool {
 	return len(p.GetInlineMath(lineIdx)) > 0
 }
 
-// NewDocument creates a new document with default front matter
-func NewDocument() *Document {
-	defaultFrontMatter := `---
-title: 
-tags: []
----
-
-`
-
-	return &Document{
-		GlobalMetadata: &Metadata{
-			Title: "",
-			Date:  "",
-			Tag:   "",
-		},
-		Blocks: []ParsedBlock{
-			{
-				Type:           TextBlock,
-				RawLines:       strings.Split(defaultFrontMatter, "\n"),
-				HasFrontMatter: true,
-				FrontMatterEnd:  4, // After "---" on line 3, content starts at line 4 (index 4)
-				InlineMath:     []InlineMathRegion{},
-				GlamourContent: "", // Content after front matter (empty initially)
-			},
-		},
-	}
-}

@@ -4,29 +4,15 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
+	"github.com/RNAV2019/quasar/internal/styles"
 )
 
-var (
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F38BA8")).
-			Padding(1, 2)
-
-	successStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A6E3A1")).
-			Padding(1, 2)
-
-	infoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#89B4FA")).
-			Padding(1, 2)
-
-	boldStyle = lipgloss.NewStyle().Bold(true)
-)
-
+// PrintError prints a styled error message to stdout.
 func PrintError(msg string) {
-	fmt.Println(errorStyle.Render(msg))
+	fmt.Println(styles.ErrorStyle.Render(msg))
 }
 
+// PrintErrorWithHints prints a styled error message followed by hint lines.
 func PrintErrorWithHints(msg string, hints []string) {
 	var fullMsg strings.Builder
 	fullMsg.WriteString(msg)
@@ -36,17 +22,20 @@ func PrintErrorWithHints(msg string, hints []string) {
 		fullMsg.WriteString(hint)
 		fullMsg.WriteString("\n")
 	}
-	fmt.Println(errorStyle.Render(fullMsg.String()))
+	fmt.Println(styles.ErrorStyle.Render(fullMsg.String()))
 }
 
+// PrintSuccess prints a styled success message to stdout.
 func PrintSuccess(msg string) {
-	fmt.Println(successStyle.Render(msg))
+	fmt.Println(styles.SuccessStyle.Render(msg))
 }
 
+// PrintInfo prints a styled informational message to stdout.
 func PrintInfo(msg string) {
-	fmt.Println(infoStyle.Render(msg))
+	fmt.Println(styles.InfoStyle.Render(msg))
 }
 
+// PrintNoDefaultNotebook prints guidance when no default notebook is configured.
 func PrintNoDefaultNotebook() {
 	msg := "No default notebook set.\n\n" +
 		"Create one with: quasar nb new\n" +
@@ -54,28 +43,34 @@ func PrintNoDefaultNotebook() {
 	PrintError(msg)
 }
 
+// PrintNoNotebooks prints guidance when no notebooks exist.
 func PrintNoNotebooks() {
 	msg := "No notebooks found.\n\n" +
 		"Create one with: quasar nb new"
 	PrintInfo(msg)
 }
 
+// PrintNotebookNotFound prints an error that the named notebook was not found.
 func PrintNotebookNotFound(name string) {
 	PrintError(fmt.Sprintf("Notebook '%s' not found.", name))
 }
 
+// PrintNotebookCreated prints a success message after creating a notebook.
 func PrintNotebookCreated(name string) {
 	PrintSuccess(fmt.Sprintf("Notebook '%s' created.", name))
 }
 
+// PrintNotebookDeleted prints a success message after deleting a notebook.
 func PrintNotebookDeleted(name string) {
 	PrintSuccess(fmt.Sprintf("Notebook '%s' deleted.", name))
 }
 
+// PrintNotebookRenamed prints a success message after renaming a notebook.
 func PrintNotebookRenamed(oldName, newName string) {
 	PrintSuccess(fmt.Sprintf("Notebook '%s' renamed to '%s'.", oldName, newName))
 }
 
+// PrintDefaultNotebookSet prints a success message after setting the default notebook.
 func PrintDefaultNotebookSet(name string) {
 	PrintSuccess(fmt.Sprintf("Default notebook set to '%s'.", name))
 }
