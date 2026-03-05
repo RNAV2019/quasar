@@ -16,8 +16,9 @@ import (
 
 // Config holds the resolved directory paths for the application.
 type Config struct {
-	CacheDir string
-	NotesDir string
+	CacheDir  string
+	NotesDir  string
+	ConfigDir string
 }
 
 // SetupEnvironment creates the cache and notes directories and returns the resolved Config.
@@ -29,10 +30,24 @@ func SetupEnvironment() (*Config, error) {
 
 	cachePath := filepath.Join(home, ".cache", "quasar")
 	notesPath := filepath.Join(home, "Documents", "quasar")
+	configPath := filepath.Join(home, ".config", "quasar")
 
 	// Create cache directory
 	if err := os.MkdirAll(cachePath, 0755); err != nil {
 		return nil, fmt.Errorf("Failed to create directory %s: %w", cachePath, err)
+	}
+
+	// Create config directory
+	if err := os.MkdirAll(configPath, 0755); err != nil {
+		return nil, fmt.Errorf("Failed to create directory %s: %w", configPath, err)
+	}
+
+	// Create default snippets.yaml if it doesn't exist
+	snippetsPath := filepath.Join(configPath, "snippets.yaml")
+	if _, err := os.Stat(snippetsPath); os.IsNotExist(err) {
+		if err := os.WriteFile(snippetsPath, []byte(defaultSnippetsYAML), 0644); err != nil {
+			return nil, fmt.Errorf("Failed to create snippets.yaml: %w", err)
+		}
 	}
 
 	// Check if notes directory exists - if not, this is first run
@@ -47,8 +62,9 @@ func SetupEnvironment() (*Config, error) {
 	}
 
 	cfg := &Config{
-		CacheDir: cachePath,
-		NotesDir: notesPath,
+		CacheDir:  cachePath,
+		NotesDir:  notesPath,
+		ConfigDir: configPath,
 	}
 
 	// Initialize Git on first run
@@ -158,6 +174,10 @@ func latexPreambles() map[string]string {
 \usepackage{lmodern}
 \usepackage{amsmath}
 \usepackage{amssymb}
+\usepackage{tikz}
+\usetikzlibrary{automata,positioning,arrows,calc,shapes,decorations.pathmorphing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 \pagestyle{empty}
 \setlength{\abovedisplayskip}{0pt}
 \setlength{\belowdisplayskip}{0pt}
@@ -171,6 +191,10 @@ func latexPreambles() map[string]string {
 \usepackage{lmodern}
 \usepackage{amsmath}
 \usepackage{amssymb}
+\usepackage{tikz}
+\usetikzlibrary{automata,positioning,arrows,calc,shapes,decorations.pathmorphing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 \dump
 `
 

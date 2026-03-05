@@ -41,7 +41,7 @@ func sanitizeMath(math string, isInline bool) string {
 		}
 	}
 	processedMath = strings.Join(filtered, "\n")
-	if !isMathEnvironment(processedMath) {
+	if !isMathEnvironment(processedMath) && !isLaTeXEnvironment(processedMath) {
 		if isInline {
 			processedMath = fmt.Sprintf("$%s$", processedMath)
 		} else {
@@ -59,6 +59,34 @@ func isMathEnvironment(s string) bool {
 		}
 	}
 	return false
+}
+
+func isLaTeXEnvironment(s string) bool {
+	return strings.HasPrefix(s, "\\begin{")
+}
+
+// NeedsPDFPipeline returns true for content that uses PostScript specials
+// (tikz, pgf, etc.) which dvipng cannot handle.
+func NeedsPDFPipeline(s string) bool {
+	return strings.Contains(s, "\\begin{tikzpicture}") ||
+		strings.Contains(s, "\\begin{pgfpicture}") ||
+		strings.Contains(s, "\\tikz")
+}
+
+// invertToWhiteOnTransparent converts a black-on-white image to white-on-transparent.
+func invertToWhiteOnTransparent(src image.Image) *image.NRGBA {
+	bounds := src.Bounds()
+	dst := image.NewNRGBA(bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := src.At(x, y).RGBA()
+			// Luminance as alpha (white background → transparent, black content → opaque white)
+			lum := (r*299 + g*587 + b*114) / 1000
+			alpha := uint8(255 - lum>>8)
+			dst.SetNRGBA(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: alpha})
+		}
+	}
+	return dst
 }
 
 func addTransparentPadding(src image.Image, top, right, bottom, left int) image.Image {
@@ -107,42 +135,101 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	texContent := fmt.Sprintf(`\begin{document}
+	tmpPngPath := filepath.Join(tmpDir, hashStr+".png")
+	usedPDFPipeline := false
+
+	if NeedsPDFPipeline(processedMath) {
+		usedPDFPipeline = true
+		// PDF pipeline for tikz/pgf content — dvipng can't handle PostScript specials,
+		// and format files are DVI-mode, so use pdflatex with a full document.
+		texContent := fmt.Sprintf(`\documentclass[border=2pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{tikz}
+\usetikzlibrary{automata,positioning,arrows,calc,shapes,decorations.pathmorphing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\begin{document}
 %s
 \end{document}
 `, processedMath)
 
-	texPath := filepath.Join(tmpDir, hashStr+".tex")
-	if err := os.WriteFile(texPath, []byte(texContent), 0644); err != nil {
-		return "", err
-	}
+		texPath := filepath.Join(tmpDir, hashStr+".tex")
+		if err := os.WriteFile(texPath, []byte(texContent), 0644); err != nil {
+			return "", err
+		}
 
-	dviPath := filepath.Join(tmpDir, hashStr+".dvi")
-	latexCmd := exec.Command("pdftex", "-output-mode=dvi", "-interaction=nonstopmode",
-		fmt.Sprintf("-output-directory=%s", tmpDir),
-		fmt.Sprintf("-fmt=%s", fmtPath),
-		texPath)
-	output, err := latexCmd.CombinedOutput()
-	if err != nil {
-		logPath := filepath.Join(tmpDir, hashStr+".log")
-		logData, _ := os.ReadFile(logPath)
-		return "", fmt.Errorf("latex compilation failed: %w\nOutput: %s\nLog: %s", err, string(output), string(logData))
-	}
+		pdfPath := filepath.Join(tmpDir, hashStr+".pdf")
+		latexCmd := exec.Command("pdflatex", "-interaction=nonstopmode",
+			fmt.Sprintf("-output-directory=%s", tmpDir),
+			texPath)
+		output, err := latexCmd.CombinedOutput()
+		if err != nil {
+			logPath := filepath.Join(tmpDir, hashStr+".log")
+			logData, _ := os.ReadFile(logPath)
+			return "", fmt.Errorf("latex compilation failed: %w\nOutput: %s\nLog: %s", err, string(output), string(logData))
+		}
 
-	if _, err := os.Stat(dviPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("DVI file not found after compilation")
-	}
+		if _, err := os.Stat(pdfPath); os.IsNotExist(err) {
+			return "", fmt.Errorf("PDF file not found after compilation")
+		}
 
-	tmpPngPath := filepath.Join(tmpDir, hashStr+".png")
-	dvipngCmd := exec.Command("dvipng",
-		"-D", "2500",
-		"-T", "tight",
-		"-bg", "Transparent",
-		"-fg", "rgb 1.0 1.0 1.0",
-		"-o", tmpPngPath,
-		dviPath)
-	if output, err := dvipngCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("dvipng failed: %w\nOutput: %s", err, string(output))
+		pdftoppmPrefix := filepath.Join(tmpDir, hashStr+"-out")
+		pdftoppmCmd := exec.Command("pdftoppm",
+			"-png", "-r", "2500",
+			"-singlefile",
+			pdfPath, pdftoppmPrefix)
+		if output, err := pdftoppmCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("pdftoppm failed: %w\nOutput: %s", err, string(output))
+		}
+
+		pdftoppmOut := pdftoppmPrefix + ".png"
+		if _, err := os.Stat(pdftoppmOut); os.IsNotExist(err) {
+			return "", fmt.Errorf("PNG file was not created by pdftoppm")
+		}
+		if err := os.Rename(pdftoppmOut, tmpPngPath); err != nil {
+			return "", fmt.Errorf("failed to rename pdftoppm output: %w", err)
+		}
+	} else {
+		texContent := fmt.Sprintf(`\begin{document}
+%s
+\end{document}
+`, processedMath)
+
+		texPath := filepath.Join(tmpDir, hashStr+".tex")
+		if err := os.WriteFile(texPath, []byte(texContent), 0644); err != nil {
+			return "", err
+		}
+
+		// DVI pipeline for regular math (faster)
+		dviPath := filepath.Join(tmpDir, hashStr+".dvi")
+		latexCmd := exec.Command("pdftex", "-output-mode=dvi", "-interaction=nonstopmode",
+			fmt.Sprintf("-output-directory=%s", tmpDir),
+			fmt.Sprintf("-fmt=%s", fmtPath),
+			texPath)
+		output, err := latexCmd.CombinedOutput()
+		if err != nil {
+			logPath := filepath.Join(tmpDir, hashStr+".log")
+			logData, _ := os.ReadFile(logPath)
+			return "", fmt.Errorf("latex compilation failed: %w\nOutput: %s\nLog: %s", err, string(output), string(logData))
+		}
+
+		if _, err := os.Stat(dviPath); os.IsNotExist(err) {
+			return "", fmt.Errorf("DVI file not found after compilation")
+		}
+
+		dvipngCmd := exec.Command("dvipng",
+			"-D", "2500",
+			"-T", "tight",
+			"-bg", "Transparent",
+			"-fg", "rgb 1.0 1.0 1.0",
+			"-o", tmpPngPath,
+			dviPath)
+		if output, err := dvipngCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("dvipng failed: %w\nOutput: %s", err, string(output))
+		}
 	}
 
 	if _, err := os.Stat(tmpPngPath); os.IsNotExist(err) {
@@ -157,6 +244,12 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	f.Close()
 	if err != nil {
 		return "", fmt.Errorf("failed to decode temporary PNG: %w", err)
+	}
+
+	// PDF pipeline produces black-on-white; convert to white-on-transparent
+	// to match the DVI pipeline's dvipng output.
+	if usedPDFPipeline {
+		srcImg = invertToWhiteOnTransparent(srcImg)
 	}
 
 	var padded image.Image

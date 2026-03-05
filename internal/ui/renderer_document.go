@@ -462,11 +462,15 @@ func (m Model) View() tea.View {
 		height := len(block.Lines)
 
 		if !isBlockActive && block.Type == editor.MathBlock && block.ImageID != 0 {
-			visualLineMap[blockIdx] = make([]int, height)
-			for i := range height {
+			displayHeight := block.ImageHeight
+			if displayHeight < height {
+				displayHeight = height
+			}
+			visualLineMap[blockIdx] = make([]int, displayHeight)
+			for i := range displayHeight {
 				visualLineMap[blockIdx][i] = 1
 			}
-			for i := range height {
+			for i := range displayHeight {
 				if globalLineIdx < offsetAbsLine {
 					globalLineIdx++
 					continue

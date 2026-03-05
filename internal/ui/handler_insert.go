@@ -2,6 +2,7 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"github.com/RNAV2019/quasar/internal/editor"
 )
 
 // handleInsertMode processes key events in insert mode.
@@ -63,6 +64,9 @@ func (m *Model) handleInsertMode(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 			m.Dirty = true
 			if msg.Text == "/" {
 				m.slashStartCol = m.Editor.Cursor.Col - 1
+				inMath := m.Editor.Cursor.BlockIdx < len(m.Editor.Blocks) &&
+					m.Editor.Blocks[m.Editor.Cursor.BlockIdx].Type == editor.MathBlock
+				m.Autocomplete.SetMathMode(inMath)
 				m.Autocomplete.Start("/")
 			} else if m.Autocomplete.IsActive() {
 				query := m.getSlashQuery()

@@ -4,6 +4,7 @@ package ui
 
 import (
 	"regexp"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -78,6 +79,7 @@ type Model struct {
 	DocumentLoading    bool   // True while initial document images are being compiled
 	fileGeneration     uint64 // Increments on each file load to discard stale render results
 
+	Undo            *editor.UndoManager
 	PendingOp       string
 	YankBuffer      string
 	YankWasLineWise bool
@@ -131,6 +133,33 @@ func InitialModel(cfg *config.Config) Model {
 	ti.SetVirtualCursor(false)
 	ti.CharLimit = 30
 
+	ac := autocomplete.NewBox()
+
+	// Load user-defined snippets and merge with built-in commands
+	if cfg.ConfigDir != "" {
+		if snippets, err := config.LoadSnippets(cfg.ConfigDir); err == nil && len(snippets) > 0 {
+			allCmds := make([]autocomplete.SlashCommand, len(autocomplete.Commands), len(autocomplete.Commands)+len(snippets))
+			copy(allCmds, autocomplete.Commands)
+			for _, s := range snippets {
+				body := s.Body
+				cursorPos := 0
+				placeholder := s.CursorPlaceholder
+				if idx := strings.Index(body, placeholder); idx >= 0 {
+					cursorPos = idx
+					body = body[:idx] + body[idx+len(placeholder):]
+				}
+				allCmds = append(allCmds, autocomplete.SlashCommand{
+					Trigger:   s.Trigger,
+					Label:     s.Label,
+					Snippet:   body,
+					CursorPos: cursorPos,
+					MathOnly:  true,
+				})
+			}
+			ac.SetCommands(allCmds)
+		}
+	}
+
 	m := Model{
 		mode:                Normal,
 		Time:                time.Now(),
@@ -147,7 +176,8 @@ func InitialModel(cfg *config.Config) Model {
 		QuitConfirmDialog:    dialog.NewConfirmDialog("Quit", "Quit without saving?"),
 		FileTreeDeleteDialog: dialog.NewConfirmDialog("Delete", ""),
 		RenameDialog:         dialog.NewInputDialog(),
-		Autocomplete:        autocomplete.NewBox(),
+		Autocomplete:        ac,
+		Undo:                editor.NewUndoManager(),
 		PendingOp:           "",
 		YankBuffer:          "",
 		YankWasLineWise:     false,

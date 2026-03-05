@@ -80,11 +80,32 @@ func (m *Model) handleNormalMode(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 		m.Editor.ClearSelection()
 		m.Editor.MoveCursor(0, 1)
 		m.KeyPreview = keyStr
+	case "u":
+		if m.Undo.Undo(&m.Editor) {
+			m.Dirty = true
+			m.StatusMessage = "Undo"
+			cmds = append(cmds, m.processDirtyBlocks())
+		} else {
+			m.StatusMessage = "Already at oldest change"
+		}
+		m.KeyPreview = "u"
+	case "U":
+		if m.Undo.Redo(&m.Editor) {
+			m.Dirty = true
+			m.StatusMessage = "Redo"
+			cmds = append(cmds, m.processDirtyBlocks())
+		} else {
+			m.StatusMessage = "Already at newest change"
+		}
+		m.KeyPreview = "U"
 	case "d":
+		m.Undo.Save(&m.Editor)
 		m.Editor.DeleteChar()
+		m.Dirty = true
 		m.KeyPreview = "d"
 	case "i":
 		m.Editor.ClearSelection()
+		m.Undo.Save(&m.Editor)
 		m.mode = Insert
 		m.KeyPreview = ""
 	case "v":
@@ -100,6 +121,7 @@ func (m *Model) handleNormalMode(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 		m.KeyPreview = ""
 	case "o":
 		m.Editor.ClearSelection()
+		m.Undo.Save(&m.Editor)
 		m.Editor.MoveToEndOfLine()
 		m.Editor.InsertNewLine()
 		m.mode = Insert
@@ -137,6 +159,7 @@ func (m *Model) handleNormalMode(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 		m.handleYank()
 		m.KeyPreview = "y"
 	case "p":
+		m.Undo.Save(&m.Editor)
 		m.handlePaste()
 		m.KeyPreview = "p"
 	case "g":

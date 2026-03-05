@@ -36,6 +36,7 @@ func (m *Model) handleSelectMode(msg tea.KeyPressMsg) {
 		m.Editor.ClearSelection()
 		m.KeyPreview = "y"
 	case "d":
+		m.Undo.Save(&m.Editor)
 		deleted, _ := m.Editor.DeleteSelection()
 		m.YankBuffer = deleted
 		m.YankWasLineWise = false

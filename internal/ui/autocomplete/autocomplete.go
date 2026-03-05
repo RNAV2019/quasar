@@ -15,6 +15,7 @@ type SlashCommand struct {
 	Label     string // Display name
 	Snippet   string // What to insert
 	CursorPos int    // Where to place cursor after insertion (relative to start)
+	MathOnly  bool   // Only show in math mode
 }
 
 // Commands is the full list of available slash commands.
@@ -51,14 +52,27 @@ type Box struct {
 	scrollIdx   int
 	x, y        int
 	width       int
+	mathMode    bool
+	commands    []SlashCommand
 }
 
 // NewBox creates a new autocomplete box.
 func NewBox() Box {
 	return Box{
-		active:  false,
-		matches: []SlashCommand{},
+		active:   false,
+		matches:  []SlashCommand{},
+		commands: Commands,
 	}
+}
+
+// SetCommands sets the full list of available commands (built-in + user snippets).
+func (a *Box) SetCommands(cmds []SlashCommand) {
+	a.commands = cmds
+}
+
+// SetMathMode controls whether math-only commands are shown.
+func (a *Box) SetMathMode(enabled bool) {
+	a.mathMode = enabled
 }
 
 // IsActive returns whether the autocomplete is active.
@@ -90,7 +104,10 @@ func (a *Box) updateMatches() {
 	a.matches = nil
 	query := strings.ToLower(a.query)
 
-	for _, cmd := range Commands {
+	for _, cmd := range a.commands {
+		if cmd.MathOnly && !a.mathMode {
+			continue
+		}
 		trigger := strings.ToLower(cmd.Trigger)
 		if fuzzyMatch(query, trigger) {
 			a.matches = append(a.matches, cmd)
