@@ -8,6 +8,7 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/blacktop/go-termimg v0.1.26
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/sys v0.41.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -39,7 +40,6 @@ require (
 	golang.org/x/image v0.36.0 // indirect
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )

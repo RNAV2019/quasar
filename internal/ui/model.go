@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/RNAV2019/quasar/internal/config"
 	"github.com/RNAV2019/quasar/internal/editor"
+	"github.com/RNAV2019/quasar/internal/terminal"
 	"github.com/RNAV2019/quasar/internal/ui/autocomplete"
 	"github.com/RNAV2019/quasar/internal/ui/dialog"
 	"github.com/RNAV2019/quasar/internal/ui/filetree"
@@ -49,6 +50,7 @@ type Model struct {
 	mode               Mode
 	width              int
 	height             int
+	CellSize           terminal.CellSize
 	Time               time.Time
 	Editor             editor.Model
 	Config             *config.Config
@@ -165,6 +167,7 @@ func InitialModel(cfg *config.Config) Model {
 		Time:                time.Now(),
 		Editor:              editor.NewModel(),
 		Config:              cfg,
+		CellSize:            terminal.GetCellSize(),
 		InlineRenders:       make(map[string]InlineMathRender),
 		CmdInput:            ti,
 		FileTree:            filetree.New(cfg.NotesDir),

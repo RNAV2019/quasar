@@ -8,6 +8,7 @@ import (
 	"github.com/RNAV2019/quasar/internal/editor"
 	"github.com/RNAV2019/quasar/internal/errors"
 	"github.com/RNAV2019/quasar/internal/latex"
+	"github.com/RNAV2019/quasar/internal/terminal"
 	"github.com/atotto/clipboard"
 )
 
@@ -99,6 +100,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.CellSize = terminal.GetCellSize()
 		m.updateEditorSize()
 
 	case BlockProcessedMsg:

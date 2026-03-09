@@ -30,7 +30,6 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 			blockIdx := i
 			lines := make([]string, len(block.Lines))
 			copy(lines, block.Lines)
-			numLines := len(block.Lines)
 			gen := m.fileGeneration
 			cmds = append(cmds, func() tea.Msg {
 				contentLines := lines
@@ -52,7 +51,8 @@ func (m *Model) processDirtyBlocks() tea.Cmd {
 				path, err := latex.CompileToPNG(content, m.Config.CacheDir, false)
 				var info latex.ImageInfo
 				if err == nil {
-					info, err = latex.TransmitImageForKitty(path, numLines, 0)
+					targetRows := latex.CalculateTargetRows(path)
+					info, err = latex.TransmitImageForKitty(path, targetRows, 0)
 				}
 				return BlockProcessedMsg{
 					BlockIdx: blockIdx, ImageID: info.ImageID, ImageCols: info.Cols,

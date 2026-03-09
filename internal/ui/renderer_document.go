@@ -470,6 +470,8 @@ func (m Model) View() tea.View {
 			for i := range displayHeight {
 				visualLineMap[blockIdx][i] = 1
 			}
+			// Vertically center the image within the display height
+			topPad := (displayHeight - block.ImageHeight) / 2
 			for i := range displayHeight {
 				if globalLineIdx < offsetAbsLine {
 					globalLineIdx++
@@ -484,7 +486,9 @@ func (m Model) View() tea.View {
 				lineNumStr := fmt.Sprintf(" %*d ", gutterWidth, lineNum)
 				contentBuilder.WriteString(indicator)
 				contentBuilder.WriteString(styles.GutterStyle.Render(lineNumStr))
-				contentBuilder.WriteString(latex.PlaceholderRow(block.ImageID, uint16(i), block.ImageCols))
+				if i >= topPad && i < topPad+block.ImageHeight {
+					contentBuilder.WriteString(latex.PlaceholderRow(block.ImageID, uint16(i-topPad), block.ImageCols))
+				}
 				contentBuilder.WriteString("\n")
 				globalLineIdx++
 				visualLinesRendered++

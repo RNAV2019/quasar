@@ -17,6 +17,27 @@ import (
 	"sync"
 )
 
+const (
+	// RenderDPI is the DPI used for LaTeX rendering.
+	RenderDPI = 2500
+
+	// BaselinePx is the pixel height of one standard LaTeX baseline skip (12pt)
+	// at the render DPI. Used to map rendered image height to terminal rows.
+	BaselinePx = 12 * RenderDPI / 72 // ~417px
+
+	// BlockVPad is the fixed vertical padding (each side) for block math images,
+	// equivalent to ~4pt at the render DPI.
+	BlockVPad = 4 * RenderDPI / 72 // ~139px
+
+	// BlockHPad is the fixed horizontal padding (each side) for block math images,
+	// equivalent to ~3pt at the render DPI.
+	BlockHPad = 3 * RenderDPI / 72 // ~104px
+
+	// cacheVersion is incremented when rendering parameters change to invalidate
+	// old cached images.
+	cacheVersion = "v2"
+)
+
 var (
 	compileLocks   = make(map[string]*sync.Mutex)
 	compileLocksMu sync.Mutex
@@ -103,7 +124,7 @@ func addTransparentPadding(src image.Image, top, right, bottom, left int) image.
 func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	processedMath := sanitizeMath(math, isInline)
 
-	hash := sha256.Sum256([]byte(processedMath + fmt.Sprintf("%v", isInline)))
+	hash := sha256.Sum256([]byte(processedMath + fmt.Sprintf("%v", isInline) + cacheVersion))
 	hashStr := hex.EncodeToString(hash[:])
 	pngPath := filepath.Join(cacheDir, hashStr+".png")
 
@@ -256,16 +277,7 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	if isInline {
 		padded = addTransparentPadding(srcImg, 4, 4, 4, 4)
 	} else {
-		w := srcImg.Bounds().Dx()
-		vPad := w * 40 / 100 / 2
-		hPad := w * 10 / 100 / 2
-		if vPad < 60 {
-			vPad = 60
-		}
-		if hPad < 30 {
-			hPad = 30
-		}
-		padded = addTransparentPadding(srcImg, vPad, hPad, vPad, hPad)
+		padded = addTransparentPadding(srcImg, BlockVPad, BlockHPad, BlockVPad, BlockHPad)
 	}
 
 	outFile, err := os.Create(pngPath)
@@ -279,4 +291,22 @@ func CompileToPNG(math string, cacheDir string, isInline bool) (string, error) {
 	outFile.Close()
 
 	return pngPath, nil
+}
+
+// CalculateTargetRows determines how many terminal rows a rendered math image
+// should occupy based on its actual pixel dimensions rather than source line count.
+func CalculateTargetRows(pngPath string) int {
+	f, err := os.Open(pngPath)
+	if err != nil {
+		return 3
+	}
+	defer f.Close()
+
+	cfg, err := png.DecodeConfig(f)
+	if err != nil {
+		return 3
+	}
+
+	rows := (cfg.Height + BaselinePx - 1) / BaselinePx // ceiling division
+	return max(1, rows)
 }
