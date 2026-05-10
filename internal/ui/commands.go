@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/RNAV2019/quasar/internal/errors"
@@ -68,6 +69,11 @@ func (m *Model) executeCommand() bool {
 		m.CmdInput.Blur()
 		return false
 	default:
+		if n, err := strconv.Atoi(cmd); err == nil {
+			m.Editor.GoToLine(n)
+			m.StatusMessage = fmt.Sprintf("Line %d", n)
+			return false
+		}
 		m.StatusMessage = fmt.Sprintf("unknown command: %s", cmd)
 		return false
 	}

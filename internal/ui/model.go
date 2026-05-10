@@ -87,6 +87,7 @@ type Model struct {
 	YankWasLineWise bool
 	CopyBuffer      string
 	KeyPreview      string // Shows current key sequence being entered
+	CountPrefix     string // Accumulated digit count prefix (e.g., "3" in "3j")
 }
 
 // TickMsg is sent on every tick to drive periodic updates.

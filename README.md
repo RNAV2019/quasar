@@ -70,6 +70,7 @@ On first run, Quasar will initialize a Git repo at `~/Documents/quasar/` and gen
 | Key | Action |
 |-----|--------|
 | `h` `j` `k` `l` | Move left/down/up/right |
+| `[count]` + motion | Repeat motion N times (e.g., `3j`, `5l`, `2w`) |
 | `w` / `b` | Next / previous word |
 | `gh` / `gl` | Start / end of line |
 | `i` | Enter insert mode |
@@ -102,6 +103,7 @@ On first run, Quasar will initialize a Git repo at `~/Documents/quasar/` and gen
 | `:wq` | Save and quit |
 | `:q!` | Force quit |
 | `:new Name:Tag` | Create note (tag optional) |
+| `:<number>` | Go to line (e.g., `:42`) |
 | `:delete` | Delete current note |
 | `:h` | Show help |
 

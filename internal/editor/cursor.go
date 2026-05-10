@@ -146,6 +146,34 @@ func (m *Model) MoveToEndOfWord() {
 	m.ensureCursorInView()
 }
 
+// GoToLine moves cursor to a 1-based absolute line number (matching gutter display).
+// Clamps to valid range [1, GetLineCount()].
+func (m *Model) GoToLine(lineNum int) {
+	totalLines := m.GetLineCount()
+	if totalLines == 0 {
+		return
+	}
+	if lineNum < 1 {
+		lineNum = 1
+	}
+	if lineNum > totalLines {
+		lineNum = totalLines
+	}
+
+	// Walk through blocks to find the right BlockIdx/LineIdx
+	remaining := lineNum
+	for blockIdx, block := range m.Blocks {
+		if remaining <= len(block.Lines) {
+			m.Cursor.BlockIdx = blockIdx
+			m.Cursor.LineIdx = remaining - 1
+			m.Cursor.Col = 0
+			m.ensureCursorInView()
+			return
+		}
+		remaining -= len(block.Lines)
+	}
+}
+
 // MoveToStartOfLine moves cursor to the beginning of the line.
 func (m *Model) MoveToStartOfLine() {
 	m.Cursor.Col = 0

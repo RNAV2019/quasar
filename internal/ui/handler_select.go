@@ -1,6 +1,10 @@
 package ui
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"strconv"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 // handleSelectMode processes key events in select mode.
 // Navigation keys extend the selection.
@@ -25,6 +29,22 @@ func (m *Model) handleSelectMode(msg tea.KeyPressMsg) {
 		return
 	}
 
+	// Count prefix accumulation: digits 1-9 start a count, 0 continues if already started
+	if keyStr >= "1" && keyStr <= "9" || (keyStr == "0" && m.CountPrefix != "") {
+		m.CountPrefix += keyStr
+		m.KeyPreview = m.CountPrefix
+		return
+	}
+
+	// Parse count and reset
+	count := 1
+	if m.CountPrefix != "" {
+		if n, err := strconv.Atoi(m.CountPrefix); err == nil && n > 0 {
+			count = n
+		}
+		m.CountPrefix = ""
+	}
+
 	switch keyStr {
 	case "esc":
 		m.mode = Normal
@@ -45,31 +65,45 @@ func (m *Model) handleSelectMode(msg tea.KeyPressMsg) {
 		m.StatusMessage = "Deleted"
 		m.KeyPreview = "d"
 	case "h", "left":
-		m.Editor.MoveCursor(0, -1)
+		for range count {
+			m.Editor.MoveCursor(0, -1)
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = keyStr
 	case "j", "down":
-		m.Editor.MoveCursor(1, 0)
+		for range count {
+			m.Editor.MoveCursor(1, 0)
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = keyStr
 	case "k", "up":
-		m.Editor.MoveCursor(-1, 0)
+		for range count {
+			m.Editor.MoveCursor(-1, 0)
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = keyStr
 	case "l", "right":
-		m.Editor.MoveCursor(0, 1)
+		for range count {
+			m.Editor.MoveCursor(0, 1)
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = keyStr
 	case "w":
-		m.Editor.MoveWordForward()
+		for range count {
+			m.Editor.MoveWordForward()
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = "w"
 	case "b":
-		m.Editor.MoveWordBackward()
+		for range count {
+			m.Editor.MoveWordBackward()
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = "b"
 	case "e":
-		m.Editor.MoveToEndOfWord()
+		for range count {
+			m.Editor.MoveToEndOfWord()
+		}
 		m.Editor.ExtendSelection()
 		m.KeyPreview = "e"
 	case "g":

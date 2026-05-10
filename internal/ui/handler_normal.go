@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/RNAV2019/quasar/internal/editor"
@@ -63,22 +64,46 @@ func (m *Model) handleNormalMode(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 		m.KeyPreview = ""
 	}
 
+	// Count prefix accumulation: digits 1-9 start a count, 0 continues if already started
+	if keyStr >= "1" && keyStr <= "9" || (keyStr == "0" && m.CountPrefix != "") {
+		m.CountPrefix += keyStr
+		m.KeyPreview = m.CountPrefix
+		return cmds
+	}
+
+	// Parse count and reset
+	count := 1
+	if m.CountPrefix != "" {
+		if n, err := strconv.Atoi(m.CountPrefix); err == nil && n > 0 {
+			count = n
+		}
+		m.CountPrefix = ""
+	}
+
 	switch keyStr {
 	case "h", "left":
 		m.Editor.ClearSelection()
-		m.Editor.MoveCursor(0, -1)
+		for range count {
+			m.Editor.MoveCursor(0, -1)
+		}
 		m.KeyPreview = keyStr
 	case "j", "down":
 		m.Editor.ClearSelection()
-		m.Editor.MoveCursor(1, 0)
+		for range count {
+			m.Editor.MoveCursor(1, 0)
+		}
 		m.KeyPreview = keyStr
 	case "k", "up":
 		m.Editor.ClearSelection()
-		m.Editor.MoveCursor(-1, 0)
+		for range count {
+			m.Editor.MoveCursor(-1, 0)
+		}
 		m.KeyPreview = keyStr
 	case "l", "right":
 		m.Editor.ClearSelection()
-		m.Editor.MoveCursor(0, 1)
+		for range count {
+			m.Editor.MoveCursor(0, 1)
+		}
 		m.KeyPreview = keyStr
 	case "u":
 		if m.Undo.Undo(&m.Editor) {
@@ -136,11 +161,15 @@ func (m *Model) handleNormalMode(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 		m.KeyPreview = "space"
 	case "w":
 		m.Editor.ClearSelection()
-		m.Editor.MoveWordForward()
+		for range count {
+			m.Editor.MoveWordForward()
+		}
 		m.KeyPreview = "w"
 	case "b":
 		m.Editor.ClearSelection()
-		m.Editor.MoveWordBackward()
+		for range count {
+			m.Editor.MoveWordBackward()
+		}
 		m.KeyPreview = "b"
 	case "x":
 		m.Editor.ClearSelection()
